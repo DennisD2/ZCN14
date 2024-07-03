@@ -1,0 +1,247 @@
+A simple index of zcn.txt sections:
+
+* zcn.txt *			-*- mode:text; mode:outline-minor -*-
+* Licence
+* About ZCN
+** Should I use ZCN?
+** Warning!
+** Requirements
+*** Memory card? Where am I supposed to get the memory card!?
+* Installing ZCN
+** An elegant port, for a more civilised age
+** Getting ZCN up and running for the first time
+*** Make a backup of any existing files
+*** Choose your own adventure
+*** A quick note for emulator and NC200 users
+*** An initial note about keyboard layouts and terminology
+*** Saving your existing data
+**** NC100 instructions for `rrinit'
+**** NC150 instructions for `rrinit'
+**** NC200 instructions for `rrinit'
+**** `rrinit' epilogue
+*** Booting ZCN via a Serial Link
+**** NC100 instructions for `zcn.bin'
+**** NC150 instructions for `zcn150.bin'
+**** NC200 instructions for `zcn200.bin'
+**** After ZCN boots
+*** Using the internal ramdisk
+*** Rebooting to test a bootable card, or after a crash
+*** Getting the first program across
+** Installing a new version using an old one
+** Installation epilogue
+** Memory card images for emulators
+** NC200 disk boot
+*** Using the disk-boot ramdisk
+* CP/M-related archives
+* The ZCN Manual
+** Introduction
+** Q&A
+*** Why is there no list of programs ZCN can/can't run?
+*** Why is zcn.txt just one big mass of text?
+*** Why do some programs show the file FOO.TXT as FOO.T?T or FOO.TwT?
+*** Why do I get rubbish from the serial port?
+*** Why are the letters so SMALL!?
+*** Why does zero look round, and O rectangular?
+*** Why do some characters look like random blotches?
+*** It says `Disk Full', but I've got plenty of room left!
+*** Why is QTERM's display when sending/receiving files messed up?
+*** How can I patch programs without DDT/SID?
+*** Why does the ROM ask me to set the time when I turn the NC on?
+*** Why do the batteries run down more quickly on ZCN?
+*** Why is the writing style so variable?
+** Running the ROM software from ZCN
+*** About `runrom'
+*** About `rrxfer'
+**** How to use it
+**** Problems
+**** An example session
+**** Bugs
+*** Hints and tips
+*** Using the NC200 floppy disk drive via the ROM software
+** Command Prompt
+** Wildcards
+** The Keyboard
+** The Screen
+** The Terminal Driver
+*** Control Codes
+*** Unix/Linux termcap/terminfo entries
+** Rebooting
+** Non-working Programs
+** Tips on using certain programs with ZCN
+*** Turbo Pascal
+*** Wordstar 4
+*** Hitech C
+**** Getting Hitech C
+**** How to run it on ZCN
+**** Realistic System Requirements for Hitech C
+**** Bugs in the library
+*** BDS C
+*** Mallard Basic
+*** QTERM
+*** Infocom adventure games (e.g. Zork, HHGTTG)
+** Logical Drives
+** User Numbers
+*** Prompt
+*** Execution
+*** User Area 255
+*** UMV internal command
+** Warning about using the Serial and Parallel ports
+** Using the Serial Port or Printer as the Console
+** The Command Shell (CCP)
+*** Command Line Editing
+*** Battery level warnings
+*** Internal Commands
+**** !! [command args]
+**** "any text
+**** %prompt_string
+**** BATWARN <0 or 1>
+**** BDOSDBUG <0 or 1>
+**** CAT filename
+**** CAPSCTRL <0 or 1>
+**** CBOOT
+**** CD [n | * | -]
+**** CRLF <0 or 1>
+**** CLS
+**** DF
+**** DIR [filespec]
+**** DUMP filename
+**** ERA (or RM) filespec
+**** FORMAT d:
+**** GET hex_address filename
+**** IFNPEEK addr val command [args]
+**** IFPEEK addr val command [args]
+**** K3
+**** LIGHT <0 or 1>	(NC200 only)
+**** MEMDUMP address
+**** MORE filename
+**** NOTE filename
+**** POKE addr val
+**** QUITSUB [command [args]]
+**** RAMD <0 or 1>	(NC200/NC150 only)
+***** Using the ramdisk
+***** Further details
+**** REALBEEP <0 or 1>
+**** REM (or #) [any text]
+**** REN file1 file2
+**** REXEC filename
+**** SAVE n filename
+**** SERIAL <0 or 1>
+**** SERTEST
+**** STTY speed
+**** SYS a:
+**** TIMEOUT [mins]
+**** TYPE filename
+**** UMV filespec n
+**** UNSYS d: (removed in ZCN 1.4)
+**** USER [n | * | -]
+**** VDU char_value [char_value]
+**** VER
+**** XYZZY
+*** External Commands
+**** COM files
+**** SUB files
+**** SUB files with parameters
+**** ZCN external commands
+***** BBCBAS [-H] [filename]
+****** Advantages of running BBC Basic in ZCN
+****** Disadvantages of running BBC Basic in ZCN
+****** Other differences and things to note
+****** Bugs
+****** The copy cursor
+****** About text files
+****** About writing to the printer as "LPT:"
+****** Builtin help
+****** BBC Basic features not covered in the NC100 manual
+******* The builtin Z80 assembler (and how CALL and USR work)
+***** BBCMIN [filename]
+***** BIGRUN [d:] command [args]
+***** BIGV [-<line num>] filename
+***** BMP bitmap_spec
+***** CAL [-H] [-O output_file] [month] [year]
+***** CALC (removed in ZCN 1.4)
+***** CODES
+***** CPMTRIS [termtype [mhz10]]
+***** DCLOCK
+***** DEFRAG [-Q] d:
+***** DIAL (removed in ZCN 1.4)
+***** DMP2TXT input.dmp output.txt
+***** DU [filespec]
+***** EXPR expression
+***** HEAD filename
+***** INVADERS
+***** KEYB [layout]
+****** DE mapping
+****** DK mapping
+****** FR mapping
+****** IT mapping
+****** SE mapping
+****** UK mapping
+****** UKDVORAK mapping
+****** US mapping
+***** LFCONV infile outfile
+***** LS [-L] [filespec]
+***** MD5CPM [file1 [... fileN]]
+***** NCSPEED [-AHIS]
+***** NCTEST
+***** OPTDIR [-Q] d:
+***** PLAY1B/PLAY2B (removed in ZCN 1.4)
+***** PLAY4B filename
+***** MAN [page]
+***** RRXFER
+***** RULER
+***** RUNROM
+***** SEMI command1 [args][; command2 [args][; command3 [args] ;...]]
+***** SLIDE
+***** SPELL filename
+***** SPELLWD word
+***** STAT
+***** SUBMIT filename [* | [arg1 [arg2 ... ]]]
+***** TIME
+***** TIMESET [[YYMMDD] HHMM[SS]]
+***** ZAP (removed in ZCN 1.4)
+***** ZCNBROT (removed in ZCN 1.4)
+***** ZCNPAINT
+***** ZCSOLI [termtype[-]]
+***** ZDBE
+***** ZRX filename
+***** ZSELX [termtype [du:]]
+****** About zselx
+****** User numbers
+****** Using zselx
+****** Command-Line Options
+****** Bugs
+***** ZX0COM.BIN
+**** Third-party programs included with ZCN
+** Limitations and Bugs
+*** Screen
+*** Keyboard
+*** Storage
+*** Speed
+*** Miscellaneous
+** CP/M Compatibility
+*** BDOS Functions
+*** BIOS Functions
+*** Zero Page etc.
+** ZCN for hackers
+*** The Screen
+*** Tight Interrupts
+*** The Power On/off Button
+*** Sound Hardware
+*** Battery levels
+*** Memory Card and Ramdisk Format
+*** The BDOS and BIOS
+*** Static Data Area
+*** ZCN's use of the user stack
+** Copying and Modifying ZCN
+** Building ZCN
+* Acknowledgements
+** Programs, routines, etc. by others
+*** ZX0 licence
+*** expr licence
+*** fish licence
+*** helvR10.bdf and dcdigits.z licence
+** General thanks
+* Epilogue
+* The future of ZCN
+* Getting ZCN
+* Contacting the Author
