@@ -1,0 +1,262 @@
+; sendk.z - kermit send xfer code
+
+.incl	"c:vars"
+.incl	"c:kermit"
+
+.extern	sendk
+sendk:
+	call	kinit
+	call	initsn
+	ld	a,(sercmd)
+	or	a
+	ld	l,'G'
+	jr	nz,sendit
+	call	srnxt
+	ret	z
+	ld	l,'S'
+sendit:	xor	a
+	ld	(nn),a
+	ld	(numtry),a
+	ld	a,l
+	ld	(ksflg),a
+sndklp:	ld	(state),a
+	cp	'S'
+	jr	nz,nosini
+	call	sinit
+	jr	sndklp
+nosini:	cp	'F'
+	jr	nz,nosfil
+	call	sfile
+	jr	sndklp
+nosfil:	cp	'D'
+	jr	nz,nosdat
+	call	sdata
+	jr	sndklp
+nosdat:	cp	'Z'
+	jr	nz,noseof
+	call	seof
+	jr	sndklp
+noseof:	cp	'B'
+	jr	nz,nosbrk
+	call	sbreak
+	jr	sndklp
+nosbrk:	cp	'G'
+	jr	nz,nossrv
+	call	sserve
+	jr	sndklp
+nossrv:	xor	'C'
+	ret
+
+sinit:
+	ld	hl,numtry
+	ld	a,(hl)
+	inc	(hl)
+	cp	MAXTRY
+	ld	a,'A'
+	ret	nc
+	call	spar
+	call	flsrng
+	ld	a,'S'
+	ld	bc,(nn)		; packet number
+	ld	de,13		; size
+	ld	b,d		; b == 0 => not extended
+	call	spack
+	call	rpack
+	ld	b,a
+	cp	'N'
+	jr	nz,nosin
+retstt:	ld	a,b
+	or	a
+	jr	z,perr
+	cp	'N'
+	jr	nz,pbn
+	call	dnak
+	jr	perr
+pbn:	call	dnum
+perr:	call	pkterr
+	ld	a,(state)
+	ret
+nosin:	or	a
+	jr	z,perr
+	cp	'E'
+	jr	nz,nosie
+	call	prerrp
+	jr	sreta1
+sireta:	call	dbadp
+sreta1:	ld	a,'A'
+	ret
+nosie:	cp	'Y'
+	jr	nz,sireta
+	ld	a,(nn)
+	cp	c
+	jr	nz,retstt
+ipakok:	call	rpar
+	xor	a
+	ld	(numtry),a
+	ld	hl,nn
+	inc	(hl)
+	res	6,(hl)
+	call	pktok
+	ld	a,(cktypq)
+	ld	(cktyp),a
+	ld	a,'F'
+	ret
+
+sfile:
+	ld	hl,numtry
+	ld	a,(hl)
+	inc	(hl)
+	cp	MAXTRY
+	ld	a,'A'
+	ret	nc
+	call	kresgp
+	ld	de,auxfcb + 2
+	ld	hl,packet
+	ld	b,8
+	call	scnfil
+	ld	a,(de)
+	and	0x7f
+	cp	' '
+	jr	z,noext
+	ld	(hl),'.'
+	inc	hl
+	ld	b,3
+	call	scnfil
+noext:	ld	(hl),b
+	ld	de,packet
+	sbc	hl,de
+	ld	bc,(nn)
+	ld	e,l
+	ld	d,0
+	ld	b,d
+	ld	a,'F'
+finsf: 	call	spack
+	call	rpack
+	ld	b,a
+	cp	'N'
+	jr	nz,nosfn
+	dec	c
+	res	7,c
+	res	6,c
+	ld	a,'Y'
+nosfn:	cp	'Y'
+	jp	nz,nosin
+	ld	a,(nn)
+	xor	c
+	jp	nz,retstt
+	ld	(numtry),a
+	ld	a,c
+	inc	a
+	and	63
+	ld	(nn),a
+	call	pktok
+	call	bufill
+	ld	(size),bc
+	inc	a
+	ld	a,'Z'
+	ret	z
+	ld	a,'D'
+	ret
+
+sdata:
+	ld	hl,numtry
+	ld	a,(hl)
+	inc	(hl)
+	cp	MAXTRY
+	ld	a,'A'
+	ret	nc
+	ld	de,(size)
+	ld	bc,(nn)
+	ld	b,1
+	ld	a,e
+	cp	MAXPSIZ
+	ld	a,'D'
+	jr	nc,finsf
+	ld	b,d
+	jr	finsf
+
+seof:
+	ld	hl,numtry
+	ld	a,(hl)
+	inc	(hl)
+	cp	MAXTRY
+	ld	a,'A'
+	ret	nc
+	ld	a,'Z'
+	ld	bc,(nn)
+	ld	de,0
+	ld	b,e
+	call	spack
+	call	rpack
+	ld	b,a
+	cp	'N'
+	jr	nz,nosen
+	dec	c
+	res	7,c
+	res	6,c
+	ld	a,'Y'
+nosen:	cp	'Y'
+	jp	nz,nosin
+	ld	a,(nn)
+	xor	c
+	jp	nz,retstt
+	ld	(numtry),a
+	ld	a,c
+	inc	a
+	and	63
+	ld	(nn),a
+	call	pktok
+	call	srnxt
+	ld	a,'F'
+	ret	nz
+	ld	a,'B'
+	ret
+
+sbreak:
+	ld	hl,numtry
+	ld	a,(hl)
+	inc	(hl)
+	cp	MAXTRY
+	ld	a,'A'
+	ret	nc
+	ld	a,'B'
+	ld	de,0
+finsb:	ld	bc,(nn)
+	ld	b,d
+	call	spack
+	call	rpack
+	ld	b,a
+	cp	'N'
+	jr	nz,nosbn
+	dec	c
+	res	7,c
+	res	6,c
+	ld	a,'Y'
+nosbn:	cp	'Y'
+	jp	nz,nosin
+	ld	a,(nn)
+	xor	c
+	jp	nz,retstt
+	ld	(numtry),a
+	ld	a,c
+	inc	a
+	and	63
+	ld	(nn),a
+	call	pktok
+	ld	a,'C'
+	ret
+
+sserve:
+	ld	hl,numtry
+	ld	a,(hl)
+	inc	(hl)
+	cp	MAXTRY
+	ld	a,'A'
+	ret	nc
+	ld	a,(sercmd)
+	and	0x5f
+	ld	(packet),a
+	ld	a,'G'
+	ld	de,1
+	jr	finsb
+

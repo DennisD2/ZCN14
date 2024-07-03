@@ -1,0 +1,178 @@
+; xutil.z - xmodem utilities
+
+.incl	"c:xmodem"
+
+.extern	initx			; set up an xmodem file transfer
+initx:
+	ld	hl,xabort
+	ld	(abortf),hl	; set the abort function
+	ld	hl,xmstr
+	jp	initsc		; just set up screen with 'Xmodem' string
+.dseg
+xmstr:	db	'Xmodem\0'
+.cseg
+
+.extern	xmflgs			; parse flags for an xmodem send
+xmflgs:
+	call	clrflg
+	ld	a,1
+	ld	(crcmod),a	; but set crc flag
+xmflp:	ld	a,(hl)
+	or	0x20
+	cp	0x20
+	ret	z		; return on end of string or space
+	inc	hl
+	cp	'b'		; 'b' - modem7 batch
+	jr	nz,noxmb
+	ld	(mdm7b),a	; set modem7 batch flag
+	xor	a
+	ld	(ymdmb),a	; clear ymodem batch (can't have both)
+	jr	xmflp
+noxmb:	cp	'y'		; 'y' - ymodem batch
+	jr	nz,noxmy
+	ld	(ymdmb),a	; set ymodem batch flag
+	xor	a
+	ld	(mdm7b),a	; clear modem7 batch (can't have both)
+	jr	xmflp
+noxmy:	cp	'k'		; 'k' - 1K packets
+	jr	nz,noxmk
+	ld	(longpk),a	; set the flag
+	jr	xmflp
+noxmk:	cp	'q'		; 'q' - quiet value
+	jr	nz,noxmq
+	ex	de,hl
+	ld	hl,qcount
+	inc	(hl)		; bump the count
+	ex	de,hl
+	jr	xmflp
+noxmq:	cp	'a'		; 'a' - alarm
+	jr	nz,noxma
+	ld	(beep),a	; set flag to beep on completion
+	jr	xmflp
+noxma:	xor	'c'		; 'c' - checksum mode
+	jr	nz,xmflp
+	ld	(crcmod),a	; set to checksum
+	jr	xmflp
+
+.extern	updcrc			; update crc with value in a
+updcrc:
+	ld	c,a		; save byte in c
+	call	dou1
+dou1:	ld	hl,chksum
+	ld	a,c
+	rrca
+	rrca
+	rrca
+	rrca
+	ld	c,a
+	xor	a
+	rld
+	inc	hl
+	rld
+	xor	c
+	and	0x0f
+	add	a,a
+	push	hl
+	ld	l,a
+	ld	h,0
+	ld	de,crctab + 1
+	add	hl,de
+	ex	de,hl
+	pop	hl
+	ld	a,(de)
+	dec	de
+	xor	(hl)
+	ld	(hl),a
+	dec	hl
+	ld	a,(de)
+	xor	(hl)
+	ld	(hl),a
+	ret
+
+.extern	can3			; send 5 CAN's to far end to force it to stop
+can3:				; used to be three, but with Zmodem systems
+	ld	b,5		; sometimes more are needed
+can3lp:	push	bc
+	ld	a,CAN
+	call	modopc
+	pop	bc
+	djnz	can3lp
+	ret
+
+.extern	chkcan			; called when we get a CAN - checks for a
+chkcan:				; second right behind it
+	call	gettc3		; wait 3 seconds
+	cp	CAN
+	ret	nz		; no - didn't get one
+	call	diag
+	db	'Cancelled by remote\0'
+	xor	a
+	ret
+
+.extern	rnresp			; beef about failure of far end to respond
+rnresp:
+	call	diag
+	db	'Remote not responding\0'
+	ret
+
+.extern	cvtnib			; convert a nibble at the bottom of a to a
+cvtnib:				; character
+	and	0x0f		; get just the bits we want
+	add	a,'0'
+	cp	'9' + 1		; check if it's a digit ok
+	ret	c		; yes - return as is
+	add	a,0x27		; else conver to a letter
+	ret
+
+xabort:	call	gettc3
+	jr	nc,xabort	; let the line cool down
+	call	can3
+	jp	dabort
+
+.useg
+.extern	olp
+olp:	ds	1
+.extern	attmps
+attmps:	ds	1
+.extern	closeo
+closeo:	ds	1
+.extern	fatal
+fatal:	ds	1
+.extern	errorf
+errorf:	ds	1
+.extern	batch
+batch:	ds	1
+.extern	secip
+secip:	ds	1
+.extern	eotc
+eotc:	ds	1
+.extern	openfl		; \
+openfl:	ds	1	;  \ Bound
+.extern	sectnm		;  /
+sectnm:	ds	2	; /
+.extern	bufsiz
+bufsiz:	ds	2
+.extern	chksum
+chksum:	ds	2
+
+.extern	expsec
+expsec:	ds	2
+.extern	sntsec
+sntsec:	ds	2
+.extern	xbuff
+.extern	packet
+xbuff:
+packet:
+	ds	1024
+
+.dseg
+crctab:
+	dw	0x0000, 0x1021
+	dw	0x2042, 0x3063
+	dw	0x4084, 0x50a5
+	dw	0x60c6, 0x70e7
+	dw	0x8108, 0x9129
+	dw	0xa14a, 0xb16b
+	dw	0xc18c, 0xd1ad
+	dw	0xe1ce, 0xf1ef
+

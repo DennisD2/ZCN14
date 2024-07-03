@@ -1,0 +1,17 @@
+NAME
+	note - type text into a file
+
+SYNOPSIS
+	note filename
+
+DESCRIPTION
+	This internal command lets you type text into a file. (Any
+	existing file will be overwritten.) You just keep typing text
+	until you're done, then type in a line consisting solely of a
+	single `.' (full stop).
+
+BUGS
+	Limited to ASCII input, and does not accept the Tab character.
+
+SEE ALSO
+	ted, type, more

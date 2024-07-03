@@ -1,0 +1,1121 @@
+; kutil.z - kermit utilities, and all the data storage
+
+.incl	"c:kermit"
+
+
+.var	EOF	-1
+.var	PACK	-2
+
+.extern	spack
+spack:
+	ld	hl,packet
+	push	hl
+	push	af
+	ld	a,(pad)
+	or	a
+	jr	z,nospad
+	push	bc
+ 	ld	b,a
+padlp:	ld	a,(padchr)
+	push	bc
+	call	modopc
+	pop	bc
+	djnz	padlp
+	pop	bc
+nospad:	ld	a,SOH
+	call	cputc
+	xor	a
+	ld	h,a
+	ld	l,a
+	ld	(hdchk),a
+	ld	(chksum),hl
+	dec	b
+	inc	b
+	jr	nz,sxthdr
+	ld	a,(cktyp)	; '1' '2' or '3'
+	add	a,e
+	add	a,0xf2 - ' '
+sxthdr:	call	cputcs		; len
+	ld	a,c
+	call	cputcs		; number
+	pop	af
+	call	cputc		; type
+	ld	a,b
+	or	a
+	jr	z,nolhdr
+	push	de
+	ex	de,hl
+	ld	a,(cktyp)
+	sub	'0'
+setxpl:	inc	hl
+	dec	a
+	jr	nz,setxpl
+	ld	de,-95
+	ld	a,d
+div95:	inc	a
+	add	hl,de
+	jr	c,div95
+	sbc	hl,de
+	push	hl
+	call	cputcs
+	pop	de
+	ld	a,e
+	call	cputcs
+	ld	hl,hdchk
+	call	finchk
+	call	cputcs
+	pop	de
+	ld	a,d
+nolhdr:	or	e
+	jr	z,scksum
+sdatlp:	pop	hl
+	ld	a,(hl)
+	inc	hl
+	push	hl
+	call	cputc
+	dec	de
+	ld	a,d
+	or	e
+	jr	nz,sdatlp
+scksum:	pop	hl
+	call	fincrc
+	ld	a,(cktyp)
+	cp	'3'
+	jr	nz,sck2
+	ld	a,(chksum + 1)
+	rrca
+	rrca
+	rrca
+	rrca
+	and	0x0f
+	add	a,' '
+	call	modopc
+	ld	a,'2'
+sck2:	cp	'2'
+	jr	nz,sck1
+	ld	hl,(chksum)
+	add	hl,hl
+	add	hl,hl
+	ld	a,h
+	and	0x3f
+	add	a,' '
+	call	modopc
+sck1:	ld	a,(chksum)
+	and	0x3f
+	add	a,' '
+	call	modopc
+	call	flsrng
+	ld	a,(eol)
+	call	modopc
+	ld	a,'q' & 0x1f
+	jp	modopc
+
+.extern	rpack
+rpack:
+	call	kgettc
+	jr	c,retf3
+	cp	SOH
+	jr	nz,rpack
+recplp:	xor	a
+	ld	h,a
+	ld	l,a
+	ld	(chksum),hl
+	ld	(hdchk),a
+	call	cinchr
+	jr	c,retf3
+	cp	SOH
+	jr	z,recplp
+	ld	hl,cktyp
+	sub	(hl)
+	sub	0xf2
+	ld	e,a		; length to de
+	ld	d,0
+	call	cinchr
+	jr	c,retf3
+	cp	SOH
+	jr	z,recplp
+	sub	' '
+	ld	c,a		; number to c
+	call	cinchr
+	jr	c,retf3
+	cp	SOH
+	jr	z,recplp
+	ld	b,a		; type to b
+	ld	a,e
+	and	0x80		; extended packet?
+	jr	z,indat
+	call	rxthdr
+retf2:	jr	c,retf3
+	jr	z,recplp
+	ld	a,(cktyp)
+	sub	'0'
+setlpl:	dec	de
+	dec	a
+	jr	nz,setlpl
+indat:	ld	a,e
+	or	d
+	ld	hl,packet
+	jr	z,nodat
+	push	de
+gdatlp:	call	cinchr
+	jr	c,retf3
+	cp	SOH
+recpl1:	jr	z,recplp
+	ld	(hl),a
+	inc	hl
+	dec	de
+	ld	a,d
+	or	e
+	jr	nz,gdatlp
+	pop	de
+nodat:	ld	(hl),a
+	call	fincrc
+	ld	a,(cktyp)
+	cp	'3'
+	jr	nz,rck2
+	call	kgettc
+retf3:	jr	c,retf
+	cp	SOH
+	jr	z,recpl1
+	ld	e,a
+	ld	a,(chksum + 1)
+	rrca
+	rrca
+	rrca
+	rrca
+	and	0x0f
+	add	a,' '
+	xor	e
+	and	0x7f
+	jr	nz,csmerr
+	ld	a,'2'
+rck2:	cp	'2'
+	jr	nz,rck1
+	call	kgettc
+	jr	c,retf
+	cp	SOH
+	jr	z,recpl1
+	ld	e,a
+	ld	hl,(chksum)
+	add	hl,hl
+	add	hl,hl
+	ld	a,h
+	and	0x3f
+	add	a,' '
+	xor	e
+	and	0x7f
+	jr	nz,csmerr
+rck1:	call	kgettc
+	jr	c,retf
+	cp	SOH
+	jr	z,recpl1
+	ld	e,a
+	ld	a,(chksum)
+	and	0x3f
+	add	a,' '
+	xor	e
+	and	0x7f
+	jr	z,cksmok
+csmerr:	call	dcheck
+retf1:	ld	b,0
+adjsiz:	ld	hl,(cspsiz)
+	ld	a,h
+	or	a
+	ld	de,-16
+	jr	nz,decsiz
+	ld	a,l
+	cp	MINPSIZ + 5
+	jr	c,nodec
+	ld	e,-4
+decsiz:	add	hl,de
+	ld	(cspsiz),hl
+nodec:	ld	a,b
+	ret
+retf:	call	dtime
+	jr	retf1
+cksmok:	call	flsrng
+	ld	a,b
+	cp	'Y'
+	jr	nz,adjsiz
+	ld	de,(cspsiz)
+	ld	hl,(spsiz)
+	sbc	hl,de
+	ret	z
+	inc	de
+	ld	(cspsiz),de
+	ret
+
+rxthdr:	call	cinchr
+	ret	c
+	cp	SOH
+	ret	z
+	sub	' '
+	ld	e,a
+	call	cinchr
+	ret	c
+	cp	SOH
+	ret	z
+	sub	' '
+	call	mul95
+	ex	de,hl
+	ld	hl,hdchk
+	call	finchk
+	push	af
+	call	cinchr
+	sub	' '
+	pop	hl
+	cp	h
+	jr	nz,rxerr
+	xor	a
+	inc	a
+	ret
+rxerr:	pop	hl
+	jr	csmerr
+
+cinchr:	push	de
+	push	hl
+	call	kgettc
+	push	af
+	call	kcrcch
+	pop	af
+	pop	hl
+	pop	de
+	ret
+
+cputcs:	add	a,' '
+cputc:	push	de
+	push	bc
+	push	af
+	call	modopc
+	pop	af
+	pop	bc
+	pop	de
+
+kcrcch:	push	bc
+	ld	c,a
+	ld	hl,hdchk
+	add	a,(hl)
+	ld	(hl),a
+	ld	a,(cktyp)
+	cp	'3'
+	jr	z,kcrc3
+	ld	hl,(chksum)
+	ld	b,0
+	add	hl,bc
+	ld	(chksum),hl
+	pop	bc
+	ret
+
+kcrc3:	push	de
+	call	dou1
+	ld	a,c
+	rrca
+	rrca
+	rrca
+	rrca
+	ld	c,a
+	call	dou1
+	pop	de
+	pop	bc
+	ret
+
+dou1:	ld	hl,chksum + 1
+	xor	a
+	rrd
+	dec	hl
+	rrd
+	xor	c
+	and	0x0f
+	add	a,a
+	push	hl
+	ld	l,a
+	ld	h,0
+	ld	de,kctab
+	add	hl,de
+	ex	de,hl
+	pop	hl
+	ld	a,(de)
+	inc	de
+	xor	(hl)
+	ld	(hl),a
+	inc	hl
+	ld	a,(de)
+	xor	(hl)
+	ld	(hl),a
+	ret
+
+fincrc:	ld	a,(cktyp)
+	cp	'1'
+	ret	nz
+	ld	hl,chksum
+finchk:	ld	a,(hl)
+	rlca
+	rlca
+	and	3
+	add	a,(hl)
+	and	0x3f
+	ld	(hl),a
+	ret
+
+.extern	bufill
+bufill:	ld	bc,0
+	ld	hl,packet
+bufilp:	call	getpc
+	jr	nc,nopack
+	cp	EOF
+	jr	nz,noteof
+	ld	a,b
+	or	c
+	ret	nz
+	dec	a
+	ret
+noteof:	ld	a,(pack)
+	ld	(hl),a
+	inc	hl
+	inc	bc
+	call	getpc
+	ld	(hl),a
+	inc	hl
+	inc	bc
+	call	getpc
+nopack:	ld	e,a
+	ld	a,(use8)
+	or	a
+	jr	nz,nohib
+	ld	a,(hibit)
+	or	a
+	jr	z,nohib1
+	bit	7,e
+	jr	z,nohib
+	ld	(hl),a
+	inc	hl
+	inc	bc
+nohib1:	res	7,e
+nohib:	ld	a,e
+	and	0x7f
+	cp	' '
+	jr	c,xorqt
+	cp	DEL
+	jr	z,xorqt
+	ld	a,(quote)
+	cp	e
+	jr	z,doquot
+	ld	a,(hibit)
+	cp	e
+	jr	z,doquot
+	ld	a,(pack)
+	cp	e
+	jr	z,doquot
+	jr	noquot
+xorqt:	ld	a,e
+	xor	64
+	ld	e,a
+doquot:	ld	a,(quote)
+	ld	(hl),a
+	inc	hl
+	inc	bc
+noquot:	ld	(hl),e
+	inc	hl
+	inc	bc
+	push	hl
+ 	ld	hl,(cspsiz)
+	xor	a
+	sbc	hl,bc
+	ex	de,hl
+	pop	hl
+	or	d
+	jr	nz,bufilp
+	ld	a,e
+	cp	6
+	jr	nc,bufilp
+	ld	a,(status)
+	dec	a
+	jr	z,bufilp
+	dec	a
+	jr	z,bufilp
+	ret
+
+.extern	getpc
+getpc:
+	push	hl
+	push	bc
+	ld	a,(pack)
+	or	a
+	jr	nz,canpak
+	call	kgw2
+	jr	poprt1
+canpak:	ld	hl,status
+	ld	a,(hl)
+	or	a
+	jr	nz,stsnz
+	ld	(hl),3
+	ld	de,data
+	ld	b,6
+fildat:	push	de
+	push	bc
+	call	kgw2
+	pop	bc
+	pop	de
+	ld	(de),a
+	inc	de
+	sbc	a,a
+	ld	(de),a
+	inc	de
+	djnz	fildat
+stsnz:	ld	hl,status
+	ld	a,(hl)
+	cp	3
+	jr	z,stsno3
+	dec	(hl)
+reteof:	add	a,a
+	ld	l,a
+	ld	h,0
+	ld	de,data + 1
+	add	hl,de
+	ld	a,(hl)
+	add	a,a
+	dec	hl
+	ld	a,(hl)
+poprt1:	jr	popret
+stsno3:	ld	hl,(data)
+	ld	a,h
+	rlca
+	jr	c,popret
+	ld	a,l
+	ld	hl,data + 2
+	ld	b,5
+ckpk:	cp	(hl)
+	jr	nz,nopak
+	inc	hl
+	bit	7,(hl)
+	jr	nz,nopak
+	inc	hl
+	djnz	ckpk
+	ld	a,2
+	ld	(status),a
+	ld	bc,[MAXPSIZ - 6 << 8] + 6
+packlp:	push	bc
+	call	kgw2
+	pop	bc
+	jr	c,packed
+	ld	hl,data
+	cp	(hl)
+	jr	z,nopkef
+	call	gw2pb
+	jr	packed
+nopkef:	inc	c
+	djnz	packlp
+packed:	ld	a,c
+	add	a,' '
+	ld	(data + 4),a
+	scf
+	ld	a,PACK
+	jr	popret
+nopak:	ld	de,data + 1
+	ld	hl,data + 2
+	ld	bc,10
+	ld	a,(de)
+	add	a,a
+	dec	de
+	ld	a,(de)
+	push	af
+	ldir
+	call	kgw2
+	ld	l,a
+	sbc	a,a
+	ld	h,a
+	ld	(data + 10),hl
+	pop	af
+popret:	pop	bc
+	pop	hl
+	ret
+
+kgw2:	call	getw2c
+	jr	c,kgeof
+	ld	hl,(ktxt)
+	inc	l
+	dec	l
+	ret	nz
+	cp	0x1a
+	jr	nz,clcra
+	scf
+kgeof:	sbc	a,a
+	ret
+clcra:	or	a
+	ret
+
+.extern	kresgp
+kresgp:
+	xor	a
+	ld	(status),a
+	ret
+
+.extern	bufemp
+bufemp:
+	ld	hl,packet
+bufmpl:	ld	a,(hl)
+	inc	hl
+	or	a
+	ret	z
+	ld	bc,0x0100
+	ld	e,a
+	ld	a,(pack)
+	or	a
+	jr	z,nobepk
+	cp	e
+	jr	nz,nobepk
+	ld	a,(hl)
+	inc	hl
+	sub	' '
+	ld	b,a
+	ld	e,(hl)
+	inc	hl
+nobepk:	ld	d,0xff
+	ld	a,(use8)
+	or	a
+	jr	nz,nobehb
+	ld	d,0x7f
+	ld	a,(hibit)
+	cp	e
+	jr	nz,nobehb
+	ld	c,0x80
+	ld	e,(hl)
+	inc	hl
+nobehb:	ld	a,e
+	and	d
+	cp	MYQUOTE
+	jr	nz,nobeqt
+	ld	a,(hl)
+	and	d
+	ld	e,a
+	and	0x7f
+	ld	d,a
+	inc	hl
+	cp	MYQUOTE
+	ld	a,e
+	jr	z,nobeqt
+	ld	a,(hibit)
+	cp	d
+	ld	a,e
+	jr	z,nobeqt
+	ld	a,(pack)
+	cp	d
+	ld	a,e
+	jr	z,nobeqt
+	xor	64
+nobeqt:	or	c
+	push	hl
+oplp:	push	af
+	push	bc
+	call	putw2c
+	pop	bc
+	pop	af
+	djnz	oplp
+	pop	hl
+	jr	bufmpl
+.dseg
+mydata:	db	MAXPSIZ + ' '
+	db	MYTIME + ' '
+	db	MYPAD + ' '
+	db	MYPCHAR ^ 64
+	db	MYEOL + ' '
+	db	MYQUOTE
+hba:	db	MYHIBIT
+cka:	db	'3'
+pka:	db	MYPACK
+capas:	db	'"'		; just long packets
+windo:	db	' '		; no windowing
+maxl1:	db	' ' + [1015 / 95] ; packet length == 1015
+maxl2:	db	' ' + [1015 % 95] ; packet length == 1015
+emdat:
+.cseg
+
+.extern	spar
+spar:
+	ld	de,packet
+	ld	hl,mydata
+	ld	bc,{emdat - mydata}
+	ldir
+	ld	a,(ksflg)		; receive mode?
+	or	a
+	jr	z,sparr			; yes - handle spar stuff differently
+	ld	a,(use8)
+	or	a
+	ld	a,'N'
+	jr	z,sps7
+setss6:	ld	(packet + {hba - mydata}),a
+sps7:	ld	a,(try2)
+	or	a
+	jr	z,splp
+	ld	hl,packet + {cka - mydata}
+	dec	(hl)
+	jr	splp
+sparr:	ld	a,(hibit)
+	or	a
+	ld	hl,use8
+	ld	de,hispfx
+	jr	nz,useh
+	ld	a,(de)
+	xor	'Y'
+	or	(hl)
+	ld	a,'N'
+	jr	nz,setd6
+useh:	ld	(hl),0
+	ex	de,hl
+	ld	a,'Y'
+	cp	(hl)
+	jr	nz,setd6
+	ld	a,MYHIBIT
+	ld	(hibit),a
+setd6:	ld	(packet + {hba - mydata}),a
+
+	ld	hl,cktypq
+	ld	a,(hl)
+	and	0xfe
+	cp	'2'
+	jr	z,ckok
+	ld	(hl),'1'
+ckok:	ld	a,(hl)
+	ld	(packet + {cka - mydata}),a
+
+	ld	a,(pack)
+	or	a
+	jr	nz,ispack
+	ld	a,' '
+ispack:	ld	(packet + {pka - mydata}),a
+
+splp:	ld	a,(longpk)
+	or	a
+	ret	nz
+	ld	hl,[' ' << 8] + ' '
+	ld	(packet + {capas - mydata}),hl
+	ld	(packet + {capas - mydata} + 2),hl
+	ret
+
+.extern	rpar
+rpar:
+	ld	hl,packet
+	push	hl
+	ld	b,16
+fillit:	ld	a,(hl)
+	or	a
+	jr	nz,filnxt
+	ld	(hl),' '
+	inc	hl
+	ld	(hl),0
+	dec	hl
+filnxt:	inc	hl
+	djnz	fillit
+	pop	hl
+	ld	a,(hl)
+	sub	' '
+	cp	MAXPSIZ
+	jr	c,psizok
+	ld	a,MAXPSIZ
+psizok:	ld	(spsiz),a
+	ld	(cspsiz),a
+	inc	hl
+	ld	a,(hl)
+	sub	' '
+	cp	MINTIM
+	jr	nc,timok1
+	ld	a,MINTIM
+timok1:	cp	MAXTIM
+	jr	c,timok2
+	ld	a,MAXTIM
+timok2:	ld	(timint),a
+	inc	hl
+	ld	a,(hl)
+	sub	' '
+	ld	(pad),a
+	inc	hl
+	ld	a,(hl)
+	xor	64
+	ld	(padchr),a
+	inc	hl
+	ld	a,(hl)
+	sub	' '
+	or	a
+	jr	nz,eolok
+	ld	a,MYEOL
+eolok:	ld	(eol),a
+	inc	hl
+	ld	a,(hl)
+	call	validq
+	jr	nc,quotok
+	ld	a,MYQUOTE
+quotok:	ld	(quote),a
+	inc	hl
+	ld	a,(hl)
+	cp	' '
+	ld	(hispfx),a
+	jr	z,clru8
+	call	validq
+	jr	c,notvq
+	ld	a,(ksflg)
+	or	a
+	jr	z,usehis
+	ld	a,(use8)
+	or	a
+	jr	nz,clru8
+	ld	a,(hispfx)
+	cp	MYHIBIT
+	jr	nz,clru8
+usehis:	ld	a,(hispfx)
+	jr	sethib
+notvq:	ld	a,(hispfx)
+	cp	'Y'
+	jr	nz,rpr7
+	ld	a,(use8)
+	or	a
+	jr	nz,rpr7
+sethmy:	ld	a,MYHIBIT
+sethib:	ld	(hibit),a
+clru8:	xor	a
+	ld	(use8),a
+rpr7:	inc	hl
+	ld	a,(ksflg)
+	or	a
+	ld	a,(hl)
+	jr	nz,rpr7s
+	cp	'2'
+	jr	z,setct
+	cp	'3'
+	jr	z,setct
+	ld	a,'1'
+	jr	setct
+rpr7s:	ld	a,(try2)
+	or	a
+	ld	a,'2'
+	jr	nz,ckrtyp
+	inc	a
+ckrtyp:	cp	(hl)
+	jr	z,setct
+	ld	a,'1'
+setct:	ld	(cktypq),a
+rpr8:	inc	hl
+	ld	a,(ksflg)
+	or	a
+	ld	a,(hl)
+	jr	nz,rpr8s
+	call	validq
+	jr	c,rpr9
+	jr	rp8sp
+rpr8s:	cp	MYPACK
+	jr	nz,rpr9
+rp8sp:	ld	(pack),a
+rpr9:	ld	a,(longpk)
+	or	a
+	ret	z
+	inc	hl
+	ld	a,(hl)
+	and	2
+	ret	z
+skipcp:	ld	a,(hl)
+	inc	hl
+	rrca
+	jr	c,skipcp
+	inc	hl
+	ld	a,(hl)
+	sub	' '
+	ld	e,a
+	inc	hl
+	ld	a,(hl)
+	sub	' '
+	call	mul95
+	ld	a,h
+	and	~ [1023 / 256]
+	jr	z,rpszok
+	ld	hl,1023
+rpszok:	ld	a,h
+	or	a
+	jr	z,cksml
+sub10:	ld	de,-10		; trim off some size for breathing room
+	add	hl,de
+	jr	spsz
+cksml:	ld	a,l
+	cp	MAXPSIZ + 1
+	jr	nc,sub10
+	or	a
+	ld	hl,500
+	jr	z,spsz
+	ld	hl,MINPSIZ
+	cp	l
+	jr	c,spsz
+	ld	l,a
+spsz:	ld	(spsiz),hl
+	ld	(cspsiz),hl
+	ret
+
+validq:	cp	'!'
+	ret	c
+	cp	'<' + 1
+	ccf
+	ret	nc
+	cp	'`'
+	ret	c
+	cp	'~' + 1
+	ccf
+	ret
+
+mul95:	ld	l,e
+	ld	d,0
+	ld	h,d
+	add	hl,hl		; * 2
+	add	hl,de		; * 3
+	add	hl,hl		; * 6
+	add	hl,hl		; * 12
+	add	hl,hl		; * 24
+	add	hl,hl		; * 48
+	add	hl,hl		; * 96
+	sbc	hl,de		; * 95
+	ld	e,a
+	add	hl,de		; + a
+	ret
+
+.extern	kinit
+kinit:
+	ld	a,MYEOL
+	ld	(eol),a
+	ld	a,MYQUOTE
+	ld	(quote),a
+	ld	a,MYTIME
+	ld	(timint),a
+	ld	a,'1'
+	ld	(cktyp),a
+	call	clrflg
+
+kflp:	ld	a,(hl)
+	or	0x20
+	cp	0x20
+	jr	z,donekf
+	cp	'b'
+	jr	nz,nokfb
+	ld	(ktxt),a
+	jr	kflpi
+nokfb:	cp	'g'
+	jr	nz,nokfg
+	ld	(getflg),a
+	jr	kflpi
+nokfg:	cp	'8'
+	jr	nz,nokf8
+	ld	(use8),a
+	jr	kflpi
+nokf8:	cp	'2'
+	jr	nz,nokf2
+	ld	(try2),a
+	jr	kflpi
+nokf2:	cp	'q'
+	jr	nz,nokfq
+	ex	de,hl
+	ld	hl,qcount
+	inc	(hl)
+	ex	de,hl
+	jr	kflpi
+nokfq:	cp	'a'
+	jr	nz,nokfa
+	ld	(beep),a
+	jr	kflpi
+nokfa:	cp	'l'
+	jr	z,savser
+	cp	'f'
+	jr	nz,nokff
+savser:	ld	(sercmd),a
+	jr	kflpi
+nokff:	cp	'x'
+	jr	nz,kflpi
+	ld	(longpk),a
+kflpi:	inc	hl
+	jr	kflp
+donekf:	ld	a,(getflg)
+	or	a
+	jr	z,noget
+	call	byp
+	or	a
+	jr	nz,savget
+	call	ilprt
+	db	'Need filename for get option\0'
+	jp	jexit
+savget:	ld	(getnam),hl
+noget:	ld	hl,kabort
+	ld	(abortf),hl
+	ld	hl,kstr
+	jp	initsc
+.dseg
+kstr:	db	'Kermit\0'
+.cseg
+
+.extern	kerror
+kerror:
+	ld	a,e
+	ld	de,(nn)
+	ld	d,a
+	ld	a,'E'
+	push	hl
+	call	spack
+	call	mtprt
+	dw	[14 << 8] + 10
+	db	'Local error: \0'
+phlpsl:	pop	hl
+	jp	prtslp
+
+.extern	prerrp
+prerrp:
+	ld	hl,packet
+	push	hl
+	call	mtprt
+	dw	[14 << 8] + 10
+	db	'Error from remote: \0'
+	jr	phlpsl
+
+.extern	scnfil
+scnfil:
+	ld	a,(de)
+	inc	de
+	and	0x7f
+	cp	' '
+	jr	z,isspc
+	ld	(hl),a
+	inc	hl
+isspc:	djnz	scnfil
+	ret
+
+.extern	dbadp
+dbadp:	call	diag
+	db	'Invalid packet type\0'
+	ret
+
+kabort:	call	gettc3
+	jr	nc,kabort		; let the line cool down
+	ld	a,(ksflg)
+	ld	de,(nn)
+	or	a
+	jr	z,nnok
+	inc	e
+nnok:	ld	d,0
+	ld	a,'A'
+	call	spack
+
+.extern	dabort
+dabort:	call	diag
+	db	'Transfer aborted\0'
+jexit:	call	crlf
+	ld	sp,(ressp)
+	ret
+
+.extern	exprp
+exprp:
+	ld	a,(pack)
+	cp	(hl)
+	jr	z,gotexp
+	ld	a,(hl)
+	ldi
+	or	a
+	jr	nz,exprp
+	ret
+gotexp:	inc	hl
+	ld	a,(hl)
+	sub	' '
+	ld	b,a
+	inc	hl
+	ld	a,(hl)
+	inc	hl
+expfl:	ld	(de),a
+	inc	de
+	djnz	expfl
+	jr	exprp
+
+.extern	clrflg
+clrflg:
+	push	hl
+	ld	hl,fill
+	ld	de,fill + 1
+	ld	bc,{endfill - fill} - 1
+	ld	(hl),b
+	ldir
+	pop	hl
+	ret
+	
+.useg
+
+fill:
+.extern	mdm7b
+mdm7b:				; modem 7 batch enabled
+.extern	hibit
+hibit:	ds	1		; high bit quote char, or zero if none
+.extern	pack
+pack:	ds	1		; repeat char pack flag, or zero if none
+.extern	longpk
+longpk:	ds	1		; long packets requested
+.extern	pad
+pad:	ds	1		; number of pad chars needed
+.extern	errors
+errors:				; xmodem error count
+.extern	padchr
+padchr:	ds	1		; what sort of padding needed
+.extern	crcerc
+crcerc:
+ktxt:	ds	1		; text mode (how do we do end of file?)
+.extern	crcmod
+crcmod:
+use8:	ds	1		; are we actually doing 8 bit transfers
+.extern	beep
+beep:	ds	1		; beep when done
+.extern	ymdmb
+ymdmb:				; y modem batch transfer
+try2:	ds	1		; type 2 checksum requested
+.extern	qcount
+qcount:	ds	1		; quiet value
+
+
+spsiz:	ds	2		; max send packet size
+cspsiz:	ds	2		; current send packet size
+.extern	getflg
+getflg:	ds	1		; server get requested
+.extern	getnam
+getnam:	ds	1		; string for names to get - overlays sercmd
+.extern	sercmd
+sercmd:	ds	1
+
+endfill:
+
+.extern	ressp
+ressp:	ds	2
+.extern	size
+size:	ds	2
+.extern	nn
+nn:	ds	1
+.extern	timint
+timint:	ds	1
+.extern	numtry
+numtry:	ds	1
+.extern	oldtry
+oldtry:	ds	1
+.extern	state
+state:	ds	1
+.extern	eol
+eol:	ds	1
+.extern	quote
+quote:	ds	1
+hispfx:	ds	1		; char he sent in prefix position
+.extern	cktyp
+cktyp:	ds	1		; checksum type we're actually using
+.extern	cktypq
+cktypq:	ds	1		; checksum type proposed
+status:	ds	1
+data:	ds	12
+.extern	ksflg
+ksflg:	ds	1
+hdchk:	ds	1		; checksum used for header
+
+.dseg
+kctab:
+	dw	0x0000, 0x1081
+	dw	0x2102, 0x3183
+	dw	0x4204, 0x5285
+	dw	0x6306, 0x7387
+	dw	0x8408, 0x9489
+	dw	0xa50a, 0xb58b
+	dw	0xc60c, 0xd68d
+	dw	0xe70e, 0xf78f
+

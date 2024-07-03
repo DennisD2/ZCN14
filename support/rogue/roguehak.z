@@ -1,0 +1,831 @@
+;ZCN hack for DPG's CP/M rogue, NC100/150/200 version
+;Public domain by Russell Marks
+
+;Need to put 'call 5A00h' at 030Ch in a rogue.com (as patched for ZCN
+;control codes) by hand, then append this code to the end.
+
+;So, is it safe to use 8000h-A7FFh? Uh... let's hope so. :-) The code
+;doesn't obviously refer to any address higher than 8000h, at least.
+
+org 09ff0h
+
+;the 3-byte instruction at 030Ch is patched to
+;call 5A00h - here - instead (by hand).
+;(the instruction was to set up a BIOS console output jump)
+
+;this bit of code runs at 5a00h and must be 16 bytes.
+ld hl,05a10h
+ld de,0a000h
+ld bc,0800h		;2k should be plenty
+ldir
+jp init
+nop
+nop
+
+
+;this is the BIOS console output function which gets jumped to,
+;but since we set the JP address used and it's not used elsewhere,
+;it can actually be anywhere we want.
+;NC200 version
+nc2bcon:
+;update screen addr
+ld a,nc2scrn/256
+out (0),a
+;falls through
+
+;NC100/150 version
+bconout:
+;output char
+ld a,c
+;falls through
+
+;deal with any character we received
+;entry: char in A
+outchar:
+push af
+call cursor
+pop af
+call grokchar
+;falls through
+
+cursor:
+ld a,(tcurdraw)
+and a
+ret z
+
+ld bc,(xypos)
+pos2aop1: call pos2ad80	;modified
+
+ld b,5
+curlp2:
+ld a,d
+xor (hl)
+ld (hl),a
+inc l
+ld a,e
+xor (hl)
+ld (hl),a
+push de
+ld de,63
+add hl,de
+pop de
+djnz curlp2
+ret
+
+
+;NB: if nc2scrn changes, the nc2yaddr table would need recalculating.
+
+nc2scrn		equ 08000h	;puts NC200 screen here
+
+
+;terminal state
+xypos:
+ypos: defb 0		;0-23
+xpos: defb 0		;0-79
+
+is_nc200: defb 0
+
+
+init:
+;test for ZCN
+ld a,(066h)
+cp 0f7h
+jp nz,0
+
+;better ZCN check
+ld c,128
+call 5
+inc a
+jp z,0
+
+;stop them running it again with '!!'; it probably isn't re-entrant
+ld a,0c9h
+ld (0100h),a
+
+;check for NC200
+ld c,144
+call 5
+cpl
+ld (is_nc200),a
+
+;blank the screen we'll be using
+call clrscrn
+
+ld e,4
+ld c,2
+call 5			;normal cursor off
+
+ld hl,bconout
+ld a,(is_nc200)
+and a
+jr z,init1
+
+;patch to always wait for a key before exiting
+ld a,0c3h
+ld (0393h),a
+ld hl,exitpat
+ld (0394h),hl
+
+;also patch pos2ad80 calls
+ld hl,nc2pos2a
+ld (pos2aop1+1),hl
+ld (pos2aop2+1),hl
+ld hl,nc2bcon
+init1:
+ld (010ah),hl
+
+;change the calls to BDOS func. 10 to call our 'bgetbuf' instead.
+
+ld hl,bgetbuf
+ld (01b5ch),hl
+ld (02beeh),hl
+
+;init char. set
+ld hl,0eac0h		;normal char. set
+ld de,charset		;where our new one will be
+ld bc,480		;96*5=480
+initlp:
+ldi
+ldi
+ldi
+ldi
+ld a,(hl)
+inc hl
+or (hl)
+inc hl
+ld (de),a
+inc de
+dec bc
+ld a,b
+or c
+jr nz,initlp
+
+ret
+
+
+;this is needed on NC200, to avoid the screen immediately disappearing
+;on exit. It prompts you to press Enter before quitting.
+exitpat:
+ld hl,mexitp
+exitlp:
+ld a,(hl)
+and a
+jr z,exit1
+push hl
+ld c,a
+call nc2bcon
+pop hl
+inc hl
+jr exitlp
+
+exit1:
+;wait for Enter
+call getchar
+cp 13
+jr nz,exit1
+
+;doesn't ret, instead does what the patched op would have
+ld hl,(06cedh)
+jp (hl)
+
+mexitp: defb 13,10,'(Press Enter to quit.) ',0
+
+
+;from zcnlib's conio.z
+
+;getchar - get char into a (without echo)
+;preserves all but f
+getchar:
+push bc
+push de
+push hl
+getchlp:
+ld c,11
+call 5
+rra
+jr nc,getchlp
+ld e,0ffh
+ld c,6
+call 5
+pop hl
+pop de
+pop bc
+ret
+
+
+;screen-handling and related routines
+
+
+;entry: row number (0 base) in C, column number (0 base) in B
+;exit:  addr of 1st byte at (B,C) in HL
+;assumes B is in range 0-79 and C is in range 0-23
+;returns two-byte char mask in DE (bits set in part you want to draw
+;in) - 1st byte in D, 2nd byte in E
+;(and also C=byte offset, which I apparently didn't bother mentioning)
+pos2ad80:
+;get line addr from nc1yaddr lookup table
+ld a,c
+rlca		;row*2
+ld e,a
+ld d,0
+ld hl,nc1yaddr
+add hl,de
+ld a,(hl)
+inc hl
+ld h,(hl)
+ld l,a
+
+;get byte for x offset and add it on
+push hl
+ld hl,zxpos80
+ld e,b
+ld d,0
+add hl,de
+ld e,(hl)
+pop hl
+add hl,de
+
+push hl
+
+;get mask into DE
+ld a,b
+and 7
+add a,a
+ld d,0
+ld e,a
+ld hl,zxmask80
+add hl,de
+ld d,(hl)
+inc hl
+ld e,(hl)
+
+;finally get byte offset in C
+;it goes 0,3,2,1 for offsets 0,1,2,3 (then repeats)
+ld a,b
+cpl
+inc a
+and 3
+ld c,a
+
+pop hl
+ret
+
+
+;NC200 version of pos2ad80, same usage.
+;This is way simpler as we're just doing the 5-line font, with no
+;horizontal squashing.
+nc2pos2a:
+ld a,c
+cp 24
+jr c,pos2ad1
+
+;just in case row>=24, because that would be bad -
+;should never happen anyway, so dump it at top-left.
+ld hl,nc2scrn
+ld de,0f000h	;leftmost nibble
+ld c,e		;zero
+ret
+
+pos2ad1:
+;get line addr from nc2yaddr lookup table
+ld a,c
+rlca		;row*2
+ld e,a
+ld d,0
+ld hl,nc2yaddr
+add hl,de
+ld a,(hl)
+inc hl
+ld h,(hl)
+ld l,a
+
+;get byte/mask for x offset
+ld a,b
+rra		;still nc from add
+ld d,0f0h
+jr nc,pos2ad2
+ld d,0fh
+pos2ad2:
+ld e,0
+ld b,e		;zero
+ld c,a
+add hl,bc
+
+;finally get shift in c
+ld c,e		;zero
+ret
+
+
+
+;draws a character. A is character.
+drawchar:
+push ix
+ld l,a
+ld h,0
+ld e,l
+ld d,h
+add hl,hl
+add hl,hl
+add hl,de
+ld de,charset-160	;32*5=160
+add hl,de
+ex de,hl
+
+ld bc,(xypos)
+
+;now (B,C) is pos, and de points to 1st byte in font data.
+;put font pointer in ix
+push de
+pop ix
+
+;get pos and mask
+pos2aop2: call pos2ad80	;modified
+
+;modify code - put bit shift count in ld b,N op in middle of loop
+inc c
+ld a,c
+ld (dshiftop+1),a
+
+ld b,5
+dc8loop:
+push bc
+ld a,d
+cpl
+and (hl)
+ld c,a
+
+;get font byte and align it correctly
+ld a,(ix)
+rlca
+dshiftop: ld b,0	;so is this
+dc8lp2:
+rrca
+djnz dc8lp2
+ld b,a		;save it to use for the 2nd byte
+
+and d
+or c
+ld (hl),a
+
+
+;do the 2nd byte
+inc l
+
+ld a,e
+cpl
+and (hl)
+ld c,a
+ld a,b
+and e
+or c
+ld (hl),a
+
+;now do next line
+push de
+ld de,63
+add hl,de
+pop de
+inc ix
+pop bc
+djnz dc8loop
+
+pop ix
+ret
+
+
+
+groktbl:
+defw tnop	;^@ ignore NULs
+defw clrscrn	;^A
+defw tnop	;tctrlb	;^B
+defw tnop	;tctrlc	;^C
+defw tnop	;tctrld	;^D
+defw tnop	;tctrle	;^E
+defw tnop	;^F
+defw tnop	;^G
+defw tbkspc	;^H
+defw dotab	;^I
+defw tctrlj	;^J
+defw tnop	;trepchar	;^K
+defw tnop	;^L
+defw tctrlm	;^M
+defw tnop	;tctrln	;^N
+defw tnop	;tctrlo	;^O
+defw curmov	;^P set cursor movement flag
+defw tnop	;^Q (ignored)
+defw tnop	;tinsline	;^R
+defw tnop	;^S (ignored)
+defw tnop	;tdelline	;^T
+defw tnop	;^U
+defw tnop	;^V
+defw tnop	;scrldn	;^W
+defw tnop	;tctrlx	;^X
+defw tnop	;tctrly	;^Y
+defw tnop	;tdelmany	;^Z multiple line delete
+defw tnop	;^[
+defw tnop	;tinsmany	;^\
+defw tnop	;clr2eos	;^]
+defw tnop	;^^
+defw clr2eol	;^_
+
+tnop:
+ret
+
+
+tmpb: defb 0
+tgetloc: defb 0
+tcurdraw: defb 1
+
+grokchar:
+ld (tmpb),a
+ld e,a
+
+ld a,(tgetloc)
+and a
+jp nz,tcurgrok
+
+ld a,e
+
+cp 07fh
+jr z,tbkspc
+
+cp 32
+jp nc,normchar	;normal char if >=32
+
+;dereference pointer in groktbl and jump to routine
+ld h,0
+ld l,a
+add hl,hl
+ld de,groktbl
+add hl,de
+ld a,(hl)
+inc hl
+ld h,(hl)
+ld l,a
+jp (hl)
+
+
+;CR
+tctrlm:
+xor a
+ld (xpos),a
+ret
+
+;LF
+tctrlj:
+ld a,(ypos)
+inc a
+cp 24
+jr nz,tctrlj1
+;no scroll up!
+;call scrlup
+ld a,23
+tctrlj1:
+ld (ypos),a
+ret
+
+tbkspc:
+ld a,(xpos)
+dec a
+cp 0ffh
+ret z
+ld (xpos),a
+ret
+
+clrscrn:
+ld a,(is_nc200)
+and a
+ld hl,0f000h	;NC100/150 screen
+ld bc,4096	;screen size
+jr z,clrs1
+ld hl,nc2scrn	;NC200 relocated screen used
+ld bc,8192
+clrs1:
+ld d,h
+ld e,l
+inc de
+dec bc
+ld (hl),0
+ldir
+ld (xypos),bc	;zero
+ret
+
+
+dotab:
+ld a,(xpos)
+and 7
+ld b,a
+ld a,8
+sub b
+ld b,a
+
+dtabloop:
+push bc
+call skipchar
+pop bc
+djnz dtabloop
+ret
+
+
+curmov:
+ld a,2	;2 chars left to get (for x,y pos)
+ld (tgetloc),a
+ret
+
+tmpcury: defb 0
+
+tcurgrok:
+ld a,(tgetloc)
+dec a
+jr z,cmhang2
+
+ld (tgetloc),a
+ld a,(tmpb)
+ld (tmpcury),a
+ret
+
+cmhang2:
+xor a
+ld (tgetloc),a
+ld a,(tmpb)
+sub 32
+cp 80
+jr c,cmh3
+ld a,79
+cmh3:
+ld (xpos),a
+ld a,(tmpcury)
+sub 'F'
+cp 24
+jr c,cmh4
+ld a,23
+cmh4:
+ld (ypos),a
+ret
+
+
+;if it gets here, it's a normal character.
+normchar:
+;not anything special so display it normally, wrapping/scrolling as
+;needed.
+call drawchar
+skipchar:
+ld a,(xpos)
+inc a
+ld (xpos),a
+cp 80
+ret nz
+xor a
+ld (xpos),a
+ld a,(ypos)
+inc a
+ld (ypos),a
+cp 24
+ret nz
+;no scroll in this!
+;call scrlup
+ld a,23
+ld (ypos),a
+ret
+
+
+;clr to eol
+;XXX kludged-up version - easy but slow
+clr2eol:
+ld a,(xpos)
+push af
+
+c2elp:
+ld a,(xpos)
+inc a
+cp 80
+jr z,c2elast1
+ld a,32
+call normchar
+jr c2elp
+
+c2elast1:
+ld a,32
+call drawchar	;draw char without advancing
+pop af
+ld (xpos),a
+ret
+
+
+;copy of 'get buffered input' routine from ZCN
+;need a copy as the existing one must use the built-in tty stuff
+
+;read buffer from console - similar to dos int21 func. 10.
+;checks for ^C [NB: have hacked this out]
+;XXX only editing supported is delete backwards
+;temp vars:
+bgbpos:	defb 0	;position, where 0 = at (bgbbuf)+2
+bgbbuf:	defw 0	;buffer being filled - from de
+bgblen: defb 0  ;current length of string
+bgbchar: defb 0	;last char. input
+
+bgetbuf:
+ld (bgbbuf),de
+
+;give up now if max. len. is zero
+ld a,(de)
+and a
+ret z
+
+xor a
+ld (bgbpos),a
+ld (bgblen),a
+
+bgbloop:
+ld e,0ffh
+ld c,6
+call 5		;con input, no echo or ^c check
+and a
+jr z,bgbloop
+ld (bgbchar),a
+
+;if it was backspace, print a backspace/space/backspace
+cp 8
+jr z,bgbbksp
+;same for DEL
+cp 127
+jr nz,bgb1
+
+bgbbksp:
+;delete char onscreen and in buffer if pos!=0
+ld a,(bgbpos)
+and a
+jr z,bgbagain
+
+dec a
+ld (bgbpos),a
+ld a,(bgblen)
+dec a
+ld (bgblen),a
+
+ld a,8
+call outchar
+ld a,32
+call outchar
+ld a,8
+ld (bgbchar),a	;make DEL look like backspace
+call outchar
+
+bgb1:
+;now echo and add, but only if printable
+ld a,(bgbchar)
+call isprint
+jr nc,bgbagain
+
+;add char to string
+;XXX this only works if (bgbpos)=(bgblen), i.e. cursor is at end of
+;string
+ld hl,(bgbbuf)
+inc hl
+inc hl
+ld a,(bgblen)
+ld b,0
+ld c,a
+add hl,bc
+ld a,(bgbchar)
+ld (hl),a
+
+;incr. len of string
+ld hl,bgbpos
+inc (hl)
+ld hl,bgblen
+inc (hl)
+
+;echo char
+ld a,(bgbchar)
+call outchar
+
+;end of loop bit
+bgbagain:
+;check for size - if bgblen=bufsiz then buffer is full
+ld hl,(bgbbuf)
+ld a,(bgblen)
+cp (hl)
+jr z,bgbfin
+
+;check for CR
+ld a,(bgbchar)
+cp 13
+jr nz,bgbloop
+
+bgbfin:
+;finished - echo a CR and return length in bgbbuf+1
+ld a,13
+call outchar
+
+ld hl,(bgbbuf)
+inc hl
+ld a,(bgblen)
+ld (hl),a
+ret
+
+
+;returns carry set if 32<=a<=126
+isprint:
+cp 32
+ccf
+ret nc
+cp 127
+ret
+
+
+;lookup table for the alternate NC200 screen - as output by:
+;for i in `seq 0 1 23`; do echo $[16#8000+64*3+64*5*$i]; done |sed 's/^/defw /'
+nc2yaddr:
+defw 32960
+defw 33280
+defw 33600
+defw 33920
+defw 34240
+defw 34560
+defw 34880
+defw 35200
+defw 35520
+defw 35840
+defw 36160
+defw 36480
+defw 36800
+defw 37120
+defw 37440
+defw 37760
+defw 38080
+defw 38400
+defw 38720
+defw 39040
+defw 39360
+defw 39680
+defw 40000
+defw 40320
+
+
+;lookup table for pseudo-80x24 NC100/150 screen - as output by:
+;for i in `seq 0 1 23`; do echo $[16#f080+64*5*(${i}%12)+30*(${i}/12)]; \
+;  done |sed 's/^/defw /'
+nc1yaddr:
+defw 61568
+defw 61888
+defw 62208
+defw 62528
+defw 62848
+defw 63168
+defw 63488
+defw 63808
+defw 64128
+defw 64448
+defw 64768
+defw 65088
+defw 61598
+defw 61918
+defw 62238
+defw 62558
+defw 62878
+defw 63198
+defw 63518
+defw 63838
+defw 64158
+defw 64478
+defw 64798
+defw 65118
+
+
+;lookup table for 80-column position to (1st) byte offset
+;(used on NC100/150 only)
+;the pattern repeats after 8 chars, but what the hell :-)
+zxpos80:
+defb  0, 0, 0, 1, 1, 1, 2, 2
+defb  3, 3, 3, 4, 4, 4, 5, 5
+defb  6, 6, 6, 7, 7, 7, 8, 8
+defb  9, 9, 9,10,10,10,11,11
+defb 12,12,12,13,13,13,14,14
+defb 15,15,15,16,16,16,17,17
+defb 18,18,18,19,19,19,20,20
+defb 21,21,21,22,22,22,23,23
+defb 24,24,24,25,25,25,26,26
+defb 27,27,27,28,28,28,29,29
+
+;80-col byte mask table
+;(used on NC100/150 only)
+;goes first byte, second byte for each char position 0-79
+;this one isn't repeated (since it really does repeat *exactly*)
+;and is thus only defined for the first 8 chars.
+;this actually masks out the character
+zxmask80:
+defb 0e0h,000h	;xxx..... ........
+defb 01ch,000h	;...xxx.. ........
+defb 003h,080h	;......xx x.......
+;now we start at the 2nd byte
+defb 070h,000h	;         .xxx.... ........
+defb 00eh,000h	;         ....xxx. ........
+defb 001h,0c0h	;         .......x xx......
+;now we start at the 3rd byte
+defb 038h,000h	;                  ..xxx...
+defb 007h,000h	;                  .....xxx
+
+
+;font data gets put here, must be last thing
+charset:

@@ -1,0 +1,113 @@
+;nc2fdimg.z is based on:
+;
+;FUZIX NC200 floppyskeleton.s
+;Copyright (C) 2017 David Given
+;
+;This program is free software; you can redistribute it and/or modify
+;it under the terms of the GNU General Public License as published by
+;the Free Software Foundation; either version 2 of the License, or (at
+;your option) any later version.
+;
+;This program is distributed in the hope that it will be useful, but
+;WITHOUT ANY WARRANTY; without even the implied warranty of
+;MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+;General Public License for more details.
+;
+;You should have received a copy of the GNU General Public License
+;along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+;[The GNU GPL is in the file `../COPYING'.]
+
+
+;This is a slightly modified version of floppyskeleton.s, written by
+;David Given who figured out the NC200's weird floppy booting scheme
+;(and cluster bug).
+;
+;This tweaked version gives a slightly extended area, which with a
+;suitable auto.prg (see nc2autop.z) can handle ZCN plus three 16k
+;pages for initial ramdisk contents - though you would still need to
+;do "ramd 1" to see that. It also drops the partition table.
+;
+;When assembled, this file gives the first 4097 (sic) bytes of a 720k
+;DS/DD floppy image, which you can make a bootable disk image by
+;adding an "auto.prg" file to run at 4000h, via e.g. truncate and
+;mtools.
+
+
+org 0
+
+    defs 3
+    defb 'NCBOOT '
+
+bios_parameter_block macro reserved_sectors
+    defw 512  ; bytes per sector
+    defb 2    ; sectors per cluster
+    defw reserved_sectors
+    defb 2    ; FAT count
+    defw 070h ; number of root directory entries
+    defw 180  ; filesystem size, in sectors
+    defb 0f9h ; media byte
+    defw 3    ; sectors per FAT
+    defw 9    ; number of sectors per track
+    defw 2    ; number of heads
+    defw 0    ; number of hidden sectors
+endm
+
+    defs 0bh-$
+    bios_parameter_block 2
+
+;I figured the partition table wasn't worth the trouble - the boot
+;sector limits the size available, and ZCN won't touch the floppy
+;after boot anyway. -rjm
+
+    defs 01feh-$
+    defb 055h, 0aah
+
+    defs 020bh-$
+    bios_parameter_block 0
+
+; We mark bad blocks in the cluster map because the Amstrad floppy disk routines
+; have a bug in it which means that in bootable disks it's unable to read clusters
+; which span tracks --- it applies the reserved sector offset *after* it calculates
+; track/head/sector, which means that it thinks that some clusters occupy sectors
+; 9 and 10 of a track, which doesn't work. We mark these as being inaccessible.
+;
+; The FAT entries for two cylinders (four physical tracks).
+; That's 18*4 = 72 sectors = 0x12 clusters. But we are offset left
+; by one sector, so clusters 0 and 5 span two tracks (and are inaccessible).
+; Then the pattern is repeated again for the other two tracks.
+four_tracks macro
+    defb 0f7h, 00fh, 000h ; clusters 0, 1
+    defb 000h, 000h, 000h ; clusters 2, 3
+    defb 000h, 070h, 0ffh ; clusters 4, 5
+    defb 000h, 000h, 000h ; clusters 6, 7
+    defb 000h, 070h, 0ffh ; clusters 8, 9
+    defb 000h, 000h, 000h ; clusters a, b
+    defb 000h, 000h, 000h ; clusters c, d
+    defb 0f7h, 00fh, 000h ; clusters d, e
+    defb 000h, 000h, 000h ; clusters f, 10
+endm
+
+fat_definition macro
+    defb 0f9h, 0ffh, 0ffh
+    defb 000h, 070h, 0ffh ; clusters 2, 3
+    defb 000h, 000h, 000h ; clusters 4, 5
+    defb 000h, 000h, 000h ; clusters 6, 7
+    defb 0f7h, 00fh, 000h ; clusters 8, 9
+    defb 000h, 000h, 000h ; clusters a, b
+
+    four_tracks
+    four_tracks
+    four_tracks
+    four_tracks
+endm
+
+    defs 0400h-$
+    fat_definition
+    defs 0a00h-$
+    fat_definition
+
+; Make an empty root directory.
+
+    defs 01000h-$
+    defb 0

@@ -1,0 +1,22 @@
+NAME
+	keyb - change keyboard layout setting
+
+SYNOPSIS
+	keyb [layout]
+
+DESCRIPTION
+	`keyb' changes the keyboard layout setting (or mapping) used
+	by ZCN. It works by patching the currently-running ZCN, so for
+	a non-UK layout you'd normally run `keyb' from autoexec.sub.
+
+	It also loads extra font data, allowing ZCN to display a few
+	dozen non-ASCII characters. This will be automatically loaded
+	when the keyboard layout is set.
+
+OPTIONS
+	layout
+		the keyboard layout to use. Run `keyb' without args to
+		see the supported options.
+
+SEE ALSO
+	capsctrl

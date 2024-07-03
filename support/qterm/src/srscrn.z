@@ -1,0 +1,226 @@
+; srscrn.z - screen routines for displaying status of a transfer
+
+.incl	"c:termcap"
+
+.extern initsc			; initialise everything
+initsc:
+	push	hl
+	ld	hl,0
+	ld	(packet),hl
+	ld	(terr),hl
+	ld	(perr),hl	; clear the variables
+	call	clear		; and the screen
+	ld	hl,30
+	call	moveto		; set up for the title
+	pop	hl
+	call	prtslp		; print protocol type
+	ld	hl,m1
+.dseg
+m1:	db	' File Transfer\0'
+.cseg
+	call	prtslp		; finish title
+	call	mtprt
+	dw	[5 << 8] + 10
+	db	'Packet:\0'
+	call	mtprt
+	dw	[5 << 8] + 26
+	db	'0\0'
+	call	mtprt
+	dw	[7 << 8] + 10
+	db	'Packet Errors:  0\0'
+	call	mtprt
+	dw	[9 << 8] + 10
+	db	'Total Errors:   0\0'
+	ret			; print rest of screen background
+
+.extern	initsn			; finish setting up screen for send
+initsn:
+	call	mtprt
+	dw	[3 << 8] + 10
+	db	'Sending:\0'	; direction for where filename goes
+	call	mtprt
+	dw	[11 << 8] + 10
+	db	'Sent:\0'	; set up for K transferred printout
+	ret
+
+.extern	initrc			; finish setting up screen for receive
+initrc:
+	call	mtprt
+	dw	[3 << 8] + 10
+	db	'Receiving:\0'	; direction for where filename goes
+	call	mtprt
+	dw	[11 << 8] + 10
+	db	'Received:\0'	; and for K transferred
+	ret
+
+.extern	pktok			; register a good packet
+pktok:
+	ld	hl,kcnt		; point at k count flag
+	ld	a,(hl)		; get value
+	or	a
+	jr	z,nokprt	; not set, so don't print
+	dec	(hl)		; clear flag
+	call	one_k		; and print a K
+nokprt:	ld	hl,dcnt		; look at count till we need clear
+	ld	a,(hl)
+	or	a
+	jr	z,nocdg		; no clear needed - bypass
+	dec	(hl)
+	jr	nz,nocdg	; not yet ..... skip it
+	call	diag
+	db	0		; OK there goes the message
+	xor	a
+	ld	(dcnt),a	; and reset dcnt back to zero
+nocdg:	ld	hl,(perr)
+	ld	a,h
+	or	l
+	jr	z,ncperr
+	call	mtprt
+	dw	[7 << 8] + 26
+	db	'0     \0'	; reset packet error count on screen
+	ld	hl,0
+	ld	(perr),hl	; and in memory
+ncperr:	ld	a,(qcount)
+	or	a
+	ret	nz
+	ld	hl,[5 << 8] + 26
+	call	moveto		; moveto where packet number goes
+	ld	hl,(packet)
+	inc	hl
+	ld	(packet),hl	; bump
+	jp	decout		; and print
+
+.extern	pkterr			; register a bad packet
+pkterr:
+	ld	hl,[7 << 8] + 26
+	call	moveto
+	ld	hl,(perr)
+	inc	hl
+	ld	(perr),hl	; bump and print packet errors
+	call	decout
+	ld	hl,[9 << 8] + 26
+	call	moveto
+	ld	hl,(terr)
+	inc	hl
+	ld	(terr),hl	; same for total errors
+	jp	decout
+
+.extern	prfile			; print the filename from auxfcb
+prfile:
+	push	hl
+	ld	a,d
+	and	e
+	inc	a		; check if there's a real size
+	jr	z,noprte	; skip if not - this is receive
+	push	de
+	call	mtprt
+	dw	[11 << 8] + 34
+	db	'out of   \0'	; and file size print
+	pop	hl
+	call	decout		; and print it
+	ld	hl,m2
+	call	prtslp		; and the 'K'
+noprte:	ld	hl,0
+	ld	(kxfer),hl	; reset count of K transferred
+	call	mtprt
+	dw	[11 << 8] + 26
+	db	'0'		; and print 0K to start things
+m2:	db	'K    \0'
+	ld	hl,[3 << 8] + 26
+	call	moveto		; move to where filename gets printed
+	pop	hl		; get fcb address to hl
+	call	prtfl		; print the filename
+	ld	b,14		; 14 chars to nuke anything left over
+	jr	cleol
+
+.extern	prtfl
+prtfl:
+	ld	c,(hl)		; get user number to c
+	inc	hl
+	ld	a,(hl)		; get drive code
+	inc	hl		; point at first char of name
+	push	hl		; save fcb address
+	push	bc		; save user number
+	add	a,'@'		; convert to a letter
+	ld	c,a
+	call	scrout		; and print it
+	pop	hl		; user number back to l
+	call	decob		; and print it
+	ld	c,':'
+	call	scrout		; add a ':'
+	pop	hl
+nodrv:	ld	b,8
+	call	pfilnm		; print the name portion
+	ld	a,(hl)
+	cp	' '		; check for an extension
+	ret	z		; no - all done
+	push	hl
+	ld	c,'.'
+	call	scrout		; print a '.'
+	pop	hl
+	ld	b,3
+
+pfilnm:	ld	a,(hl)		; get a char from fcb
+	inc	hl
+	push	hl
+	push	bc
+	and	0x7f		; ditch attribute bit
+	cp	' '		; is it printable?
+	ld	c,a
+	call	nz,scrout	; print if so
+	pop	bc
+	pop	hl
+	djnz	pfilnm		; loop till all done
+	ret
+
+.extern	diag
+diag:
+	ld	a,3
+	ld	(dcnt),a	; set so that 3 packets later we'll clear
+	ld	hl,[14 << 8] + 10
+	call	moveto		; move to where messages go
+	pop	hl		; string address to hl
+	push	hl		; back on stack
+	call	prtslp		; print it
+	pop	de		; restore start to de
+	push	hl		; save end
+	or	a
+	sbc	hl,de		; get length
+	ld	a,50
+	sub	l		; get 50 - length
+	ld	b,a		; to b
+cleol:	ld	a,(tcbits)
+	and	b_cleol		; clear to eol possible
+	jp	z,cleol		; do it if so
+	ld	c,' '		; put a space in c
+cleolp:	push	bc
+	call	scrout		; and print it
+	pop	bc
+	djnz	cleolp		; till count runs out
+	ret
+
+.extern	one_k
+one_k:
+	ld	a,(qcount)
+	or	a
+	ret	nz
+	ld	hl,[11 << 8] + 26
+	call	moveto		; move to where K printout goes
+	ld	hl,(kxfer)
+	inc	hl
+	ld	(kxfer),hl	; add one to count
+	call	decout		; print the number
+	ld	c,'K'
+	jp	scrout		; and add a 'K'
+
+.dseg
+.extern	kcnt
+kcnt:	db	0
+
+.useg
+dcnt:	ds	1
+packet:	ds	2
+terr:	ds	2
+perr:	ds	2
+kxfer:	ds	2
+

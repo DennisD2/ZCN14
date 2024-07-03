@@ -1,0 +1,859 @@
+; cf.z - creeping featurism (i.e. file operations in chat scripts)
+;	 plus stuff to look after numbers in chat scripts
+
+.incl	"c:vars"
+
+; stest - compare two strings !% = .s1.s2. `label  jump if equal
+;			      !% _ .s1.s2. `label  jump if equal case insens.
+;			      !% # .s1.s2. `label  jump if not equal
+
+.extern	stest
+stest:	xor	a
+	ld	(casefl),a
+	call	areabp
+	cp	'#'
+	jr	z,ckseq		; '#' for inequality
+	xor	'='
+	jr	z,ckseq		; '=' for equality
+	ld	(casefl),a	; set case flag true
+	xor	'_' ^ '='	; '_' for equality case insensitive
+	ret	nz
+ckseq:	or	a		; z equality, nz inequality
+	push	af		; save test value
+	call	incbyp		; step up to strings
+	push	hl
+	ld	hl,work2
+	ld	de,work2 + 1
+	ld	bc,255
+	ld	(hl),b
+	ldir			; clear space where strings will live
+	pop	hl
+	or	a
+	jr	z,testzz
+	ld	de,work2 + 1
+	ld	b,2
+seqslp:	push	bc
+	call	scanst		; scan a string
+	inc	de
+	pop	bc
+	jr	c,testzz	; exit if end of input
+	djnz	seqslp		; otherwise loop till both read
+	inc	hl		; skip trailing terminator
+	push	hl		; save input pointer
+	ld	hl,work2 + 1
+	ld	de,work2 + 42	; get the two strings
+csl:	ld	b,0x7f
+	call	cmptst		; check a characters
+	jr	nz,phltz	; different, so finish test operation
+	ld	a,(hl)
+	or	a		; end of string?
+	jr	z,phltz		; yes - finish test this way too
+	inc	hl
+	inc	de		; next chars .....
+	jr	csl
+
+; the !~ creeping featurism entry
+
+.extern	cf
+cf:
+	call	areabu		; what's wanted?
+	inc	hl
+	cp	'-'
+	jr	z,cf_era	; '-' erases
+	cp	'='
+	jr	z,cf_ren
+	cp	'+'
+	jr	z,cf_copy	; '+' copies
+	cp	'Y'
+	jr	z,cf_filq	; 'Y' file query: jump if file exists
+	xor	'N'
+	ret	nz		; 'N' file query: jump if file doesn't exist
+
+; fall into file query routine
+
+; file query: check see if a file exists or not, and then jump to a label if
+; it does.
+
+cf_filq:
+	or	a		; z for 'N', nz for 'Y'
+	push	af
+	call	scnfcb		; get a fcb
+	ld	de,fcb
+	ld	c,open		; try to open it - note that this will also
+				; work with wildcards
+	push	hl
+	call	usrbds		; open
+	inc	a
+phltz:	pop	hl
+testzz:	jr	z,nofil		; not there - do test one way round
+	pop	af		; 'Y' / 'N' result back
+	ret	z		; 'N' and file exists => no skip
+	jr	dskp1		; 'Y' and file => skip
+nofil:	pop	af		; no file .....
+	ret	nz		; 'Y' and no file => no skip
+dskp1:	jp	doskip		; go skip to the new line
+
+; rename: du: is taken from the first name - a1:x = b7:y will rename a1:y
+
+cf_ren:	call	gettwo
+	ret	c		; exit on an error
+	ld	hl,(auxfcb)
+	ld	(fcb),hl	; xfer drive / user info
+	ld	de,fcb
+	ld	c,open
+	call	usrbds		; open
+	inc	a
+	ret	z		; not there - exit
+	ld	a,(fcb + 10)
+	add	a,a
+	ret	c		; if it's R/O stop now
+	ld	de,auxfcb
+	ld	c,open
+	call	usrbds		; open
+	inc	a
+	ret	nz		; replacement _IS_ there - so exit
+	ld	hl,auxfcb + 1
+	ld	de,fcb + 17
+	ld	bc,16
+	ldir			; shift stuff for rename
+	ld	de,fcb
+	ld	c,rename
+	jp	usrbds		; go do it
+
+; erase subroutine: no wildcards, single file erase
+
+cf_era:	call	scnfcb
+	ret	z		; no wildcards allowed
+	ld	de,fcb
+	ld	c,open
+	call	usrbds		; open the file
+	ld	a,(fcb + 10)
+	add	a,a
+	ret	c		; if it's R/O stop now
+	ld	de,fcb
+	ld	c,erase
+	jp	usrbds		; otherwise erase it
+
+; copy file routine
+
+cf_copy:
+	call	gettwo		; get two fcb's - one to fcb, one to auxfcb
+	ret	c		; exit on an error
+	ld	de,fcb
+	ld	c,open
+	call	usrbds		; open file1
+	inc	a
+	ret	z		; not there: exit
+	ld	de,auxfcb
+	ld	c,open
+	call	usrbds		; open file2
+	inc	a
+	ret	nz		; is there: exit
+	ld	de,auxfcb
+	ld	c,create
+	call	usrbds		; create file2
+	inc	a
+	ret	z		; create failed: exit
+	ld	de,xbuff
+	ld	c,setdma
+	call	bdos		; set dma address
+cplp:	ld	de,fcb
+	ld	c,read
+	call	usrbds		; read a sector
+	or	a
+	jr	nz,copied	; all done
+	ld	de,auxfcb
+	ld	c,write
+	call	usrbds		; write it back
+	or	a
+	jr	z,cplp		; exit if write failed
+copied:	ld	de,auxfcb
+	ld	c,close
+	jp	usrbds		; close output file
+
+; parse two filenames, separated by an '=' sign
+
+gettwo:	call	scnfcb		; get one
+	scf
+	ret	z		; exit w/ carry if wildcards
+	call	byp
+	cp	'='		; need an '='
+	scf
+	ret	nz		; not there: exit
+	push	hl
+	call	xferax		; shift it to auxfcb
+	pop	hl
+	inc	hl
+	call	scnfcb		; get a second
+	scf
+	ret	z		; exit with carry on an error
+	or	a
+	ret			; else clear carry for OK
+
+; !@ evaluation subroutine
+
+.extern	eval
+eval:
+	call	areabu		; set to read the string
+	sub	'A'		; get the variable number
+	cp	26
+	jr	nc,eerr0	; not legal, exit now
+	call	ivar
+	push	de		; save it's address
+	inc	hl
+	call	scan		; scan a term
+	jr	c,eerr1		; no good - exit
+	push	af		; save the value
+	call	byp
+	cp	'-'
+	jr	z,opok
+	xor	'+'		; check the operator
+	jr	nz,eerr2
+opok:	push	af		; save the operator (zero for '+', nz for '-')
+	inc	hl
+	call	scan		; get a second term
+	jr	nc,s2ok		; all OK, go set the variable
+	pop	de
+eerr2:	pop	de
+eerr1:	pop	de		; clean up the stack
+eerr0:	call	ilprt
+	db	'Bad expression: \0'
+	call	dim		; tell the user
+	ld	hl,0x80
+	call	prtslp
+	jp	crlf		; and return
+s2ok:	ld	l,a		; second term to l
+	pop	bc		; operator to b
+	pop	af		; first term to a
+	dec	b
+	inc	b		; zero => '+'
+	jr	z,addem		; go do it
+	sub	l
+	sub	l		; setup for subtraction
+addem:	add	a,l		; do the addition
+	pop	hl		; restore variable address
+	ld	(hl),a		; save result
+	ret
+
+; !# test routine: compare variables with other variables or numbers
+
+.extern	test
+test:
+	call	areabu
+	sub	'A'		; get the variable
+	cp	26
+	jr	nc,eerr0	; exit on an error
+	call	ivar
+	ld	a,(de)		; get te value
+	push	af		; save it
+	call	incbyp		; get the operator
+	cp	'<'
+	jr	z,cmpok
+	cp	'>'
+	jr	z,cmpok
+	cp	'#'
+	jr	z,cmpok
+	xor	'='
+	jr	nz,eerr1	; exit if it's no good
+cmpok:	push	af		; save the operator
+	inc	hl
+	call	scan		; get the term
+	jr	c,eerr2		; something wrong, exit
+	ld	e,a		; term to e
+	pop	af		; restore the operator
+	or	a
+	jr	nz,nocpe	; z => '=' => equality
+	pop	af
+	cp	e		; test for equality
+	ret	nz		; exit if no good
+	jr	doskip		; go do the goto
+
+; this is here for jr length reasons
+
+cplt:	pop	af
+	cp	e		; compare
+skipnc:	ret	nc		; if it failed exit now
+
+; jump to a line number
+
+doskip:	call	scnnum		; get the number to go to
+	pop	hl		; get return address back
+	pop	de		; get the next line
+	dec	a		; save it away (needs to be -1)
+	push	af		; save the new line away
+	jp	(hl)		; jump to return address
+
+nocpe:	cp	'#'		; '#' => inequality
+	jr	nz,nocpne
+	pop	af		; restore variable value
+	cp	e
+	ret	z		; exit if test failed
+	jr	doskip		; else do the goto
+nocpne:	cp	'>'
+	jr	nz,cplt		; '>' => greater than
+	pop	af		; var to a
+	ld	d,a		; and to d
+	ld	a,e		; term to e
+	cp	d		; and compare
+	jr	skipnc		; go check the result
+
+; initch - do odd bits and pieces of setup for chat operation
+
+.extern	initch
+initch:	ld	a,1
+	ld	(opentr),a	; clear number of open tries
+
+.extern	clrvar
+clrvar:
+	ld	a,'A'
+	ld	(_check_),a
+	ld	hl,vars		; nuke all variables to zero
+	ld	de,vars + 1
+	ld	bc,26 + 9 + 26	; 26 numbers, plus 35 strings 0 - 9 & a - z
+	ld	(hl),b		; start with a zero from b
+	ldir
+	dec	b		; b comes out of the ldir w/ zero: dec to -1
+	ld	(hl),b		; -1 byte to end strings
+	ld	bc,512 - 9 - 27
+	ldir			; fill remaining space with -1's
+	ret
+
+ivar:	push	hl		; save hl
+	ld	l,a
+	ld	h,0		; offset in a to hl
+	ld	de,vars
+	add	hl,de		; index into table
+	ex	de,hl		; swap to de
+	pop	hl		; restore hl
+	ret
+
+scan:	call	byp
+	or	0x20
+	sub	'a'		; was it a letter?
+	cp	26
+	jr	nc,scnnum	; no, go see about a number
+	inc	hl		; step over it
+	call	ivar		; index into array
+	ld	a,(de)		; get the value
+	ret			; and return - carry cleared by ivar
+
+scnnum:	ld	e,0
+	call	byp		; find the number
+snlp:	ld	a,(hl)		; get char back
+	sub	'0'
+	cp	10		; number?
+	ccf
+	ret	c		; return if not
+	ld	d,a		; save in d
+	ld	a,e
+	add	a,a
+	add	a,a
+	add	a,e
+	add	a,a		; a = e * 10
+	add	a,d		; + d
+	ld	e,a
+	inc	hl
+	ld	a,(hl)		; next letter
+	cp	'-'
+	jr	z,rete
+	cp	'+'
+	jr	z,rete		; + and - are legal delimiters
+	or	' '
+	xor	' '		; so are ' ' and null
+rete:	ld	a,e		; get value from e
+	jr	nz,snlp
+	ret			; return, carry clear from compare
+
+; mattog - handle !& toggles: 'm' & 'l' for matches, 'o' for modem output echo
+
+.extern	mattog
+mattog:	call	areabu		; get command letter and upper case it
+	cp	'O'
+	ld	c,op_bit	; 'O' - do output bit
+	jr	z,dotog
+	cp	'L'
+	ld	c,lf_bit	; 'L' - do looking for message bit
+	jr	z,dotog
+	cp	'M'		; 'M' - do match bit
+	ret	nz
+	ld	c,mat_bit
+dotog:	call	incbyp		; now look for a char to say what to do
+	ld	hl,mode		; point hl at mode byte
+	or	a
+	jr	z,xorit		; nothing: toggle the bit
+	cp	'0'
+	jr	nz,clrit	; not '0': clear the bit to enable
+	ld	a,(hl)
+	or	c		; otherwise set it
+	jr	smret
+clrit:	ld	a,c
+	cpl			; toggle bit in c
+	and	(hl)		; clear the bit in questin
+	jr	smret
+xorit:	ld	a,(hl)
+	xor	c		; flip the bit
+smret:	ld	(hl),a		; save and we're done
+	ret
+
+; messag - process a !> printout
+
+.extern	messag
+messag:	call	areabp		; point at first non-white
+	ld	de,packet	; somewhere to put it
+	push	de
+	ld	bc,128 << 8	; 128 chars max, and eoln is the delimiter
+	call	parst		; crunch up the string
+	pop	hl
+	jp	prtslp		; and dump it out
+
+; fileio - process !( r/w commands to read / write variables from the file
+
+.extern	fileio
+fileio:
+	call	areabu		; get R or W
+	cp	'R'
+	jr	z,setrd
+	cp	'W'
+	ret	nz
+	ld	a,34		; write random
+	db	0x11		; ld de,XXXX - kills ld a below
+setrd:	ld	a,33		; read random
+	ld	(hibit),a	; save it away for later
+	call	incbyp
+	or	0x20
+	sub	'a'
+	cp	26
+	ret	nc		; check valid string name
+	push	af		; save string index
+	call	incbyp
+	sub	'0'		; number zero to nine for file record
+
+	ld	hl,lbrs		; get /QTERM.LBR as a filename
+	push	af
+	call	scnfcb		; parse into 0x5b
+	pop	af
+	ld	hl,['T' << 8] + 'S'
+	ld	(0x65),hl	; convert extent from LBR to STR
+	ld	hl,(chtusr)
+	inc	h
+	ld	(0x5b),hl	; set drive / user
+	ld	hl,0x68		; point hl / de at nulls
+	ld	de,0x69
+	ld	bc,0xff - 0x68	; clear to end of name
+	ldir
+	ld	(0x7d),a	; save record number now
+
+	ld	de,0x5b
+	ld	c,15
+	call	usrbds		; open it
+	pop	de
+	inc	a
+	ret	z		; exit if no good
+	ld	a,d
+	add	a,9
+	call	fparam		; point at string
+	ld	de,0x80
+	push	de		; save string address to read from
+	push	hl		; save string address in table
+	push	de		; and read address again
+	ld	b,d
+	ld	c,0x7f
+	ldir			; shift the string
+	pop	de		; address to de
+	ld	c,26
+	call	bdos		; set dma
+	ld	bc,(hibit)	; r/w BDOS opcode to c
+	ld	de,0x5b
+	push	de
+	call	usrbds		; do the operation
+	pop	de
+	ld	c,16
+	call	usrbds		; close the file
+	pop	hl
+	jr	repstr		; replace string in table
+
+; sinput - handle two cases of input processing for !<
+
+.extern	sinput
+sinput:	call	areabp		; get the command character
+	ld	d,a		; command char to d
+	call	incbyp		; get variable / string letter
+	call	ucsa		; upper case it
+	sub	'A'
+	cp	26		; is it valid?
+	ret	nc		; nope
+	ld	e,a		; letter code to e
+	ld	a,d		; command char back from d
+	xor	'-'
+	jr	z,strin		; '-' for string input
+	xor	'.' ^ '-'
+	ret	nz		; '.' for hot key input
+	ld	d,a		; make code in e fill de
+	push	de		; save
+	call	kbdin		; go get a character
+	pop	de
+	ld	hl,vars
+	add	hl,de		; index into variables
+	ld	(hl),a		; save the letter
+	ret
+
+strin:	ld	d,e
+	push	de
+	ld	de,work2	; point at input area
+	ld	a,40
+	ld	(de),a		; 40 chars maximum
+	ld	c,10
+	call	bdos		; go get them
+	call	crlf		; throw a new line just for the hell of it
+	ld	hl,work2 + 1
+	ld	e,(hl)		; get the length
+	inc	hl		; point at real text
+	pop	af
+	push	hl
+	ld	d,0		; extend length to de
+	add	hl,de		; point at end of string
+	ld	(hl),d		; add a null terminating byte
+savstr:	add	a,9		; get string index to a
+	call	fparam		; point at string
+repstr:	call	kilstr		; kill it
+	xor	a
+	pop	de
+	jp	insstr		; and replace it
+
+; now starts the middle of the "read string variable from modem" code - this
+; is kinda cut to shreds for jr length reasons - we enter at the bottom and
+; leave via savstr above
+
+; the very end - we've read the string, now it's time to save it
+
+gotit:	inc	de		; point back to start
+	push	de		; save this point for later
+	ld	h,d
+	ld	l,e		; copy to hl
+kcclp:	ld	a,(hl)		; get a char
+	and	0x7f		; nuke bit 7
+	ld	(de),a		; save it
+	inc	hl		; bump read ptr
+	or	a
+	jr	z,hsav		; exit on a null
+	cp	' '
+	jr	c,kcclp		; ditch control chars
+	cp	0x7f
+	jr	z,kcclp		; and deletes
+	inc	de		; otherwise step up to allow saved character
+	jr	kcclp
+
+hsav:	ld	a,(hibit)	; get string number
+	jr	savstr		; go and save it
+
+; now the loop to find the start
+
+stlp:	call	redsch		; check a character
+	jr	z,wasec		; check for end character
+	ld	a,(de)		; no - we'll want to save original char back
+wasec:	ld	c,a		; save char to save
+	push	hl
+	ld	h,l		; load start char into h
+	call	chksch		; did we find it?
+	pop	hl
+	ld	a,c
+	ld	(de),a		; drop terminator in
+	jr	z,gotit		; yes - go save it away
+	djnz	stlp		; count chars
+	ret			; return when we run out chars
+
+; ![ ^ a c1c2
+;
+; After ![ - and ![ : and normal lines have left text in w2 (a la stufw2),
+; parse a string starting with c1 (but not including it), and ending with c2
+; (again not including it) - save in string a. If c1 (or c2) are a null
+; then the string becomes any whitespace delimited string: whitespace is
+; taken as ' ', tab, cr, lf. Note also that all control characters are
+; thrown away.
+
+ipstr:	call	ucsahl
+	sub	'A'		; convert .....
+	cp	26		; and test string index
+	ret	nc
+	ld	(hibit),a	; save it
+	call	incbyp		; step up to delimiter chars
+	push	hl
+	ld	hl,work2 + 257
+	ld	de,packet
+	ld	bc,66
+	ldir
+	pop	hl
+	ld	de,pack	+ 1	; save them in pack
+	ld	b,2		; two, null terminates
+	xor	a
+	ld	(de),a		; preload chars with two nulls
+	dec	de
+	ld	(de),a
+	call	parst		; crunch up the string
+	ld	hl,(pack)	; load delimiters from where parst put them
+	ld	bc,64 << 8	; max of 64 chars to look at / c == 0
+	ld	de,packet + 65	; point de at saved text
+
+; now loop looking for the end
+
+endlp:	call	redsch		; check a character
+	jr	nz,noend	; check for end character
+	inc	c		; flag we saw an end char
+	ld	(de),a		; add a zero to terminate
+	jr	cntend		; jump to count
+noend:	dec	c
+	inc	c
+	jr	nz,stlp		; we've seen an end - go do it
+cntend:	djnz	endlp		; count chars
+	ret			; return when we run out chars
+
+; handle ![ multiple choice thingies from the modem
+
+.extern	multi
+multi:
+	call	areabp		; what's wanted?
+	ld	c,a		; save the second character
+	call	incbyp		; strip spaces
+	xor	a
+	ld	(casefl),a
+	ld	a,c
+	cp	'^'
+	jr	z,ipstr
+	cp	':'
+	jp	z,silnce
+	cp	'-'		; '-' input ......
+	jr	z,minput
+	xor	'+'		; '+' for 8 bit string compare
+	jr	z,str8b
+	cp	'=' ^ '+'	; '=' for 7 bit
+	jr	z,str7b
+	cp	'_' ^ '+'	; '_' for 7 bit and case insensitive
+	ret	nz		; oops - don't grok it.
+	ld	(casefl),a	; set case flag
+str7b:	ld	a,0x7f		; set 7 bit flag
+	db	0x06		; makes the next byte the operand of a ld b,xx
+str8b:	dec	a		; really ld a,0xff since a == 0:
+				; set all 8 bits
+	push	af		; save comparison mask
+	ld	de,packet	; somewhere to put match string
+	ld	bc,[40 << 8] + ' ' ; 40 chars max, space is the delimiter
+	call	parst		; crunch up the string
+	pop	bc		; comparison mask back to b
+	ret	c		; oops - bad string
+	push	hl
+	ld	hl,work2 + 322	; point at stuff we read ..... (don't ask why
+mclp:	dec	hl		; it's there :-)
+	ld	a,(hl)		; end of string yet?
+	or	a
+	pop	de		; keep stack safe
+	ret	z		; end of string: exit
+	push	de		; save word back on stack
+	ld	de,packet
+	call	cmptst		; do we have a match??
+	jr	nz,mclp		; skip if no good
+	push	hl
+cmplp:	ld	a,(de)
+	or	a		; end of string we're searching for?
+	jr	nz,mtchmo	; yes - we got a hit
+	pop	hl
+	pop	hl		; get string pointer back to hl
+doskp1:	jp	doskip
+mtchmo:	call	cmptst
+	jr	nz,mchbad	; oops - didn't match, so exit now
+	inc	hl
+	inc	de
+	jr	cmplp		; and back for more
+mchbad:	pop	hl		; restore pointer
+	jr	mclp		; and back for more
+
+minput:	call	scnnum		; get a time
+	or	a
+	jr	nz,timok
+	ld	a,15		; none given, default to 15 seconds
+timok:	push	af
+	push	hl
+	ld	hl,work2
+	ld	de,work2 + 1
+	ld	bc,512
+	ld	(hl),c
+	ldir			; clear space where strings will live
+	pop	hl
+	call	byp
+	or	a
+	jr	z,nostr		; no strings, all done
+	ld	de,work2 + 1
+	ld	b,4
+sslp:	push	bc
+	call	scanst		; scan a string
+	inc	de
+	pop	bc
+	jr	c,nostr		; exit if end of input
+	djnz	sslp		; otherwise loop till 4 read
+nostr:	ld	hl,work2 + 1
+	call	finstr		; get address of it's end
+	ld	(work2 + 240),hl ; and save it
+	ld	hl,work2 + 42
+	call	finstr
+	ld	(work2 + 242),hl ; and for string 2
+	ld	hl,work2 + 83
+	call	finstr
+	ld	(work2 + 244),hl ; and 3
+	ld	hl,work2 + 124
+	call	finstr
+	ld	(work2 + 246),hl ; and 4
+	pop	af		; get time back
+	ld	c,a		; save it
+second:	dec	c
+	ret	z		; all out of time - exit
+	ld	de,600
+	call	setspd		; set the speed
+qrtrms:	ld	b,96		; hang loose a while
+qmslp:	djnz	qmslp
+	push	hl
+	push	bc
+	call	procch
+	jr	c,nochar
+	call	stufw2		; save the char
+	inc	de
+	ld	hl,(work2 + 240)
+	call	chkbak		; did we get string1
+	jr	z,gotone	; exit if so
+	ld	hl,(work2 + 242)
+	call	chkbak		; string 2?
+	jr	z,gotone	; exit if so
+	ld	hl,(work2 + 244)
+	call	chkbak		; string 3
+	jr	z,gotone	; exit if so
+	ld	hl,(work2 + 246)
+	call	chkbak		; and lastly check string 4
+	jr	z,gotone
+nochar:	pop	bc
+	pop	hl
+	dec	hl		; count down second timer
+	ld	a,h
+	or	l
+	jr	nz,qrtrms
+	jr	second		; loop back
+
+gotone:	pop	bc
+	pop	hl
+	ret
+
+.extern	stufw2
+stufw2:	ld	hl,work2 + 258
+	ld	de,work2 + 257
+	ld	bc,64
+	ldir
+	ld	(de),a		; save the character
+	ret
+
+.extern	clerw2
+clerw2:	ld	hl,work2 + 256
+	ld	de,work2 + 257
+	ld	bc,70
+	ld	(hl),b
+	ldir
+	ret
+
+finstr:	ld	a,(hl)
+	or	a
+	ret	z
+	inc	hl
+	jr	finstr
+
+chkbak:	dec	hl
+	ld	a,(hl)
+	inc	hl
+	or	a
+	jr	nz,isastr
+	inc	a
+	ret
+isastr:	push	de
+cklp:	dec	de
+	dec	hl
+	ld	a,(hl)
+	or	a
+	jr	z,pdret
+	ld	a,(de)
+	xor	(hl)
+	and	0x7f
+	jr	z,cklp
+pdret:	pop	de
+	ret
+
+cmptst:	ld	a,(casefl)
+	or	a		; case insensitive?
+	push	af		; save z flag
+	ld	a,(de)
+	jr	z,noucs1	; nope - use the character as is
+	and	0x7f
+	call	ucsa		; force upper case
+noucs1:	ld	c,a
+	pop	af		; get z flag back for case insensitive
+	ld	a,(hl)
+	jr	z,noucs2
+	and	0x7f
+	call	ucsa		; mask and force upper case
+noucs2:	xor	c		; get in the rest of it
+	and	b		; mask as necessary
+	ret
+
+silnce:	call	scnnum		; get a time
+	or	a
+	jr	nz,stimok
+	ld	a,15		; none given, default to 15 seconds
+stimok:	call	clerw2
+	ld	b,a
+	inc	b
+setsil:	ld	c,b
+xsecnd:	dec	c
+	ret	z
+	push	bc
+	ld	de,600
+	call	setspd		; set the speed
+xrtrms:	ld	b,96		; hang loose a while
+xmslp:	djnz	xmslp
+	push	hl
+	call	procch
+	pop	hl
+	jr	c,xnchar
+	call	stufw2
+	pop	bc
+	jr	setsil
+xnchar:	dec	hl		; cound down second
+	ld	a,h
+	or	l
+	jr	nz,xrtrms
+	pop	bc
+	jr	xsecnd		; loop back
+
+; read a char, and see if it matches the delimiter in c
+
+redsch:	dec	de
+chksch:	ld	a,(de)
+	and	0x7f		; nuke parity
+	inc	h
+	dec	h		; is h zero?
+	jr	nz,nowsp	; no - don't do white space check
+	call	iswa		; is it white space?
+	scf
+	ccf			; clear carry
+	ret	nz		; return nz if not (no match)
+	xor	a		; clear a so 'cp h' below forces zero
+nowsp:	xor	h		; see if char matches delimiter
+	ret
+
+.dseg
+.extern	mode
+mode:	db	lf_bit
+
+.useg
+casefl:	ds	1		; case insensitive string match?
+.extern	vars
+vars:	ds	26		; space for 'a' through 'z'
+.extern	strngs
+strngs:	ds	512		; space for 35 strings
+.extern	_check_
+_check_:
+	ds	1		; check space
+

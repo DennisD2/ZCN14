@@ -1,0 +1,22 @@
+NAME
+	invaders - invisible invaders, possibly from space
+
+SYNOPSIS
+	invaders
+
+DESCRIPTION
+	Invaders is an unfinished but reasonably playable game.
+
+KEYS
+	Z	move left
+	X	move right
+	Space	fire
+	Q	quit
+
+BUGS
+	The invaders gradually grow invisible because it starts
+	updating faster than the NC's LCD screen can handle. That's
+	the main reason why I never bothered finishing it. But you
+	might be able to get by if you crank up the intensity control.
+
+	The invaders (etc.) are especially invisible on the NC200.

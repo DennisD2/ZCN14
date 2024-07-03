@@ -1,0 +1,21 @@
+NAME
+	ncspeed - test effective Z80 CPU speed
+
+SYNOPSIS
+	ncspeed [-ahis]
+
+DESCRIPTION
+	Test the effective speed of the Z80 CPU, using RTC timing.
+
+OPTIONS
+	-a		run test in RAM not ROM
+
+	-h		usage help
+
+	-i		test with ints on (to test ZCN int overhead)
+
+	-s		test in screen RAM (blanks screen)
+
+BUGS
+	A single run is only accurate to within about 75kHz, you
+	should average the result of many runs for more accuracy.

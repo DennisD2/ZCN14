@@ -1,0 +1,11 @@
+NAME
+	bs200 - battleships game
+
+SYNOPSIS
+	bs200 [ -b | -s ] [ -c ]
+
+DESCRIPTION
+	bs200 is bs for the NC200. See that man page for details.
+
+SEE ALSO
+	bs

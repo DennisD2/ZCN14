@@ -1,0 +1,13 @@
+NAME
+	sys - make a drive bootable (install ZCN on it)
+
+SYNOPSIS
+	sys a:
+
+DESCRIPTION
+	Write ZCN system to a drive, making it bootable. It's only
+	possible to do this for drive A:. The drive must have already
+	been formatted before doing this.
+
+SEE ALSO
+	format

@@ -1,0 +1,434 @@
+; file.z - file handling odds and ends
+
+.incl	"c:vars"
+
+.extern	gofil			; get a filename, and open into auxfcb
+gofil:
+	call	gauxfc		; get a filename, parse in aux fcb
+	ret	c		; esc - exit now
+	jr	z,nowc		; no wildcards
+
+.extern	opnaux
+opnaux:
+	xor	a
+	call	clrw2		; set pointers for read
+	ld	de,auxfcb
+	ld	c,open		; open the file
+	call	usrbds
+	add	a,1
+	ret	nc		; return now if open ok
+	ld	a,(scning)
+	add	a,a
+	ret	c
+
+.extern	fnferr
+fnferr:	call	ilprt		; beef and complain about file not found
+	db	'File not found\r\n\0'
+	scf
+	ret
+
+.extern	nowc
+nowc:
+.extern	nowcp
+nowcp:
+	call	ilprt
+	db	'Can\'t handle wildcards\r\n\0'
+	scf
+	ret
+
+.extern	gauxfc
+gauxfc:
+	call	getfcb		; get a filename to fcb at 0x5b
+	push	af		; save return status in carry
+	call	byp
+	ld	(ppp),hl	; save pointer for chat
+	pop	af		; restore carry
+
+.extern	xferax
+xferax:				; transfer fcb at fbc to auxfcb
+	ld	bc,34		; load the registers
+
+.extern	xferaz
+xferaz:
+	ld	hl,fcb
+	ld	de,auxfcb
+	ldir			; and copy to auxfcb
+	ret
+
+.extern	getfcb
+getfcb:
+	call	prompt
+	db	'Filename? \0'	; prompt and input
+	ld	a,(ipbuf)
+	cp	'\e'		; carry?
+	scf
+	ret	z		; return now with carry if so
+	ld	hl,ipbuf
+
+.extern	scnfcb			; parse a fcb at hl to 0x5b
+scnfcb:
+	call	byp		; step over any spaces
+	push	hl
+	ld	hl,fcb
+	ld	de,fcb + 1
+	ld	bc,33
+	ld	(hl),b
+	ldir			; fill fcb with zeros
+	ld	bc,(curusr)
+	inc	b		; bump logged drive for fcb
+	ld	(fcb),bc	; drop in user and drive now
+	pop	hl		; get input pointer to hl
+	push	hl		; but save it again
+	call	ucsahl		; get (possible) drive spec to a
+	cp	'A'
+	jr	c,trynum
+	cp	'P' + 1		; valid drive letter?
+	jr	nc,respar
+	sub	'@'
+	ld	b,a		; save the drive in b
+	inc	hl
+	ld	a,(hl)		; get the next letter
+	cp	':'		; is it a ':'?
+	jr	z,usebc		; yes, only drive was given: use what we have
+trynum:	sub	'0'
+	cp	10		; do we have a valid digit?
+	jr	nc,respar	; no - reset and ignore whole mess
+scnusr:	ld	c,a		; save in c
+	inc	hl
+	ld	a,(hl)		; get the next letter
+	cp	':'		; is it a ':'?
+	jr	z,usebc		; yes - we got a user: go process it all
+	sub	'0'
+	cp	10
+	jr	nc,respar	; oops - not a number: reset and ignore
+	ld	e,a		; current digit to e
+	ld	a,c
+	add	a,a
+	add	a,a
+	add	a,c
+	add	a,a		; a = c * 10
+	add	a,e		; + e
+	and	0x1f		; and 0x1f gives updated user number
+	jr	scnusr		; loop back for another go
+usebc:	inc	hl		; point at char after ':'
+	ex	(sp),hl		; save on stack
+	ld	(fcb),bc	; save new drive / user codes away
+respar:	pop	hl		; hl points at filename
+	ld	de,fcb + 2	; point de at name area
+	ld	b,8
+	call	scanfn		; parse the filenane
+	ld	a,(hl)
+	cp	'.'		; '.' => extension
+	jr	nz,nodot
+	inc	hl		; step over it
+nodot:	ld	b,3
+	call	scanfn		; parse it
+	push	hl		; save pointer to text
+	ld	hl,fcb + 2
+	ld	a,'?'		; check for '?'s in the fcb (wildcards)
+	ld	bc,11
+	cpir
+	pop	hl		; restore text pointer
+	ret			; with z flag set for a match
+
+scanfn:	call	ucsahl		; get a char
+	or	a		; exit on a zero byte
+	jr	z,gotnam
+	cp	'.'		; or a '.'
+	jr	z,gotnam
+	cp	' '		; or a ' '
+	jr	z,gotnam
+	inc	hl		; move input pointer
+	dec	b
+	inc	b		; test b
+	jr	z,scanfn	; loop back if zero
+	ld	(de),a		; save char in fcb
+	cp	'*'		; '*'?
+	jr	z,gotstr	; handle elsewhere if so
+	inc	de		; move output pointer
+	dec	b		; one less char to go
+	jr	scanfn
+gotnam:	dec	b		; decrease b till all done
+	ret	m
+	ld	a,' '		; get a space
+	ld	(de),a		; put it in fcb
+	inc	de		; and move pointer
+	jr	gotnam
+gotstr:	ld	a,'?'		; put in a '?'
+	ld	(de),a
+	inc	de		; move pointer
+	djnz	gotstr		; loop till all full of '?'s
+	jr	scanfn		; continue parse
+
+.extern	areabu
+areabu:	call	areabp		; do an areabp, and ucsa the char
+
+.extern	ucsahl
+ucsahl:	ld	a,(hl)		; get char at hl
+
+.extern	ucsa
+ucsa:	cp	'a'
+	ret	c		; return if it's below 'a'
+	cp	'z' + 1
+	ret	nc		; or if it's above 'z'
+	and	0x5f		; force lower case
+	ret
+
+; scnwld - enter with hl pointing at a filename, and add the list of
+; matching filenames to the list at fnbrpt / fnbspt
+
+.extern	scnwld
+scnwld:
+	call	byp		; strip leading space
+	push	hl		; save hl
+	call	scnfcb		; get a filename
+	call	xferax		; transfer to auxfcb
+	ld	hl,(auxfcb)
+	ld	(newusr),hl	; keep a copy of the drive and user
+	ld	de,auxlin
+	ld	c,setdma
+	call	bdos		; set dma to auxlin (seems like a safe place)
+	ld	c,srchf		; do a search first first time
+scnlp:	ld	de,auxfcb
+	call	usrbds		; any more names?
+	inc	a
+	jr	z,scannd	; exit if not
+	rrca
+	rrca
+	rrca			; a *= 32
+	ld	de,(fnbspt)
+	ld	hl,work + 1024	; out of room?
+	or	a
+	sbc	hl,de
+	jr	z,nosav		; skip if so - that's 64 filenames anyway!
+	ld	hl,(newusr)	; get drive and user
+	ex	de,hl
+	ld	(hl),e
+	inc	hl
+	ld	(hl),d		; and install them
+	inc	hl
+	ex	de,hl		; save save pointer in de
+	ld	l,a
+	ld	h,0
+	ld	bc,auxlin - 31	; -32 because of the inc a above
+	add	hl,bc		; hl now points at name portion
+	ld	bc,14		; 11 chars to transfer, + 3 for spacing
+	ldir			; move them characters
+	ld	(fnbspt),de	; put save pointer back away
+nosav:	ld	c,srchn		; go look for next name
+	jr	scnlp
+scannd:	pop	hl		; restore string pointer
+				; and step over filename to next one
+
+.extern	unbyp			; move a string pointer in hl to the end of
+unbyp:				; the current word
+	ld	a,(hl)
+	cp	' '
+	ret	z		; stop when we hit a space
+	or	a
+	ret	z		; or a zero
+	inc	hl
+	jr	unbyp
+
+.extern	getlin			; read a line of data from file
+getlin:
+	ld	de,auxlin	; we'll save data in auxlin
+gallp:	xor	a
+	ld	(de),a		; set zero for end of line
+	push	de
+	call	getw2c		; get a character
+	pop	de
+	ret	c		; return carry on physical end of file
+	cp	0x1a
+	scf
+	ret	z		; or logical end of file
+	cp	0x0d
+	jr	z,glstrp	; end of line - stip trailing blanks
+	cp	0x7f
+	jr	z,gallp		; ignore deletes
+	cp	' '
+	jr	c,gallp		; and other control characters
+	ld	(de),a		; save it
+	ld	hl,auxlin + 127
+	or	a
+	sbc	hl,de		; check line length
+	jr	z,gallp
+	inc	de		; and bump pointer if not at end of line
+	jr	gallp
+glstrp:	ld	hl,auxlin
+	or	a
+	sbc	hl,de		; did we hit the start of the line?
+	ret	z		; return if so
+	dec	de
+	ld	a,(de)		; look at previous character
+	xor	' '		; is it a space?
+	ret	nz		; no - leave it and return
+	ld	(de),a		; else turn it into a zero
+	jr	glstrp
+
+.extern	print			; print a local file to the remote
+print:
+	call	gofil		; get and open file
+	ret	c		; exit now on an error
+	ld	a,0x7f
+	ld	(b7flag),a	; set flag to strip bit 7
+	ld	a,2
+	ld	(cscqfl),a	; enable ctrl ^S ^Q spotting
+plp:	call	lstmod		; check incoming chars
+	call	kbdcc		; check the keyboard
+	cp	'x' & 0x1f	; quit on a typed ^X
+	jr	z,prsent
+	ld	a,(cscqfl)	; ^S seen?
+	rrca
+	jr	c,plp		; yes, so loop for a while
+	call	getw2c		; get next char to send
+	jr	c,prsent	; exit on physical end of file
+	and	0x7f
+	cp	0x1a
+	jr	z,prsent	; or logical end of file
+	cp	'\n'
+	jr	nz,nonlin	; not a linefeed
+	ld	a,(lflg)
+	or	a		; are we sending these?
+plpz:	jr	z,plp		; it gets thrown if disabled
+	ld	a,'\n'
+nonlin:
+	cp	' '
+	jr	c,sendit	; if it's a control char, no echo check
+	ld	hl,ecflg
+	inc	(hl)
+	dec	(hl)		; echo check enabled?
+	jr	z,sendit	; nope - send as is
+	inc	hl
+	ld	(hl),a		; save echo check value
+sendit:	push	af		; save the char
+	call	modop		; send it
+	ld	a,(chd)		; get the character delay
+	ld	e,a
+	ld	d,0		; to de
+	pop	af
+	cp	'\r'		; did we just send a return?
+	jr	nz,pwait	; nope - handle char delay / echo check
+	ld	de,(nld)	; get new line delay
+	ld	a,(lfecho)	; linefeed echo enabled?
+	ld	(ecval),a	; save it if so
+	ld	(lfwflg),a	; set linefeed wait flag if needed
+pwait:	call	setspd		; make a clock dependant value in hl
+	add	hl,hl		; and double it
+	ld	a,h
+	or	l
+	jr	nz,pwlp
+	inc	l		; minimum 1
+pwlp:	push	hl
+	call	lstmod		; keep an eye on returning chars
+	pop	hl
+	ld	a,(ecval)	; echo check in progress?
+	dec	a
+	jr	z,ecok		; we got the needed char - break
+	dec	hl
+	ld	a,h
+	or	l		; count hl down
+	jr	nz,pwlp
+ecok:	ld	(ecval),a	; set echo check value to zero
+	ld	hl,lfwflg	; look at linefeed wait flag
+	ld	a,(hl)
+	ld	de,100		; 100 ms delay in de (prototype)
+	ld	(hl),d		; turn linefeed wait flag off
+	or	a		; test original value
+	jr	z,plpz		; back to send next character if not there
+	jr	pwait		; back to wait again for the extra 1/10th sec.
+
+prsent:	call	ilprt
+	db	'\r\nSent\r\n\0'
+	jr	cb7
+
+.extern	type			; type a file locally
+type:
+	call	gofil		; get and open the file
+	ret	c		; quit now on an error
+	ld	a,0x7f
+	ld	(b7flag),a	; set flag to strip bit 7
+	call	dim		; dim mode
+	call	clrpsp
+tlp:	call	getw2c		; get a character
+	jr	c,teof		; exit on eof
+	cp	0x1a
+	jr	z,teof		; and on CP/M eof char
+	call	limitc
+	jr	c,tlp
+	ld	(lco),a		; save in last char
+	call	tabexp		; type it
+	jr	nc,tlp		; loop unless ^X cancelled
+teof:	ld	a,(lco)
+	cp	'\n'
+	call	nz,crlf		; output a newline if needed
+	call	bright		; back to bright
+cb7:	xor	a
+	ld	(cscqfl),a	; clear ^S ^Q flag
+	dec	a		; effectively ld a,0xff
+	ld	(b7flag),a	; clear bit 7 zap mask
+	ret
+
+.extern	newdsk
+newdsk:
+	call	prompt
+	db	'Drive? \0'	; prompt and input
+	ld	hl,ipbuf	; parse a full fcb, although we only want
+	call	scnfcb		; drive and user
+	ld	hl,(fcb)	; get new values
+	dec	h		; set drive correct
+	ld	(curusr),hl	; and save them
+
+.extern	reset			; reset: simply reset CP/M to remove R/O
+reset:				; status on changed disks
+	ld	a,(cflg)
+	or	a		; catch file open?
+	ld	c,rescpm
+	jr	z,zbdos		; nope, full reset
+	ld	a,(cfcb + 1)	; get catch file drive
+	ld	hl,fcb + 1
+	cp	(hl)		; same as reset drive?
+	ret	z		; yes, exit now
+	dec	a
+	ld	e,a
+	ld	c,seldrv	; select chat file drive
+	call	bdos
+	ld	a,(fcb + 1)	; get reset drive
+	ld	hl,1		; set hl to 1
+	ld	c,logdrv
+shlp:	dec	a		; count down
+zbdos:	jp	z,bdos		; jump to bdos when done
+	add	hl,hl
+	jr	shlp
+
+.dseg
+.extern	b7flag
+b7flag:	db	0xff
+.extern	cscqfl
+cscqfl:	db	0
+
+.extern	lfecho
+lfecho:	db	0
+.extern	ecflg
+ecflg:	db	0
+.extern	ecval
+ecval:	db	0
+lfwflg:	db	0
+
+.useg
+lco:	ds	1
+.extern	curusr
+curusr:	ds	1
+.extern	curdrv
+curdrv:	ds	1
+.extern	auxfcb
+auxfcb:	ds	37
+.extern	auxlin
+auxlin:	ds	128
+.extern	script
+script:	ds	1024
+.extern	scrwrk
+scrwrk:	ds	3072
+.extern	work
+work:	ds	1536
+

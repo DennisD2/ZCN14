@@ -1,0 +1,21 @@
+NAME
+	stat - emulate old ZCN `stat' command (like k3 and df combined)
+
+SYNOPSIS
+	stat
+
+DESCRIPTION
+	Stat gives a few bits of info, e.g.:
+
+	Sys upgrd spc: 121 bytes
+	Max prog size: 46k
+	Free on drivs: A:=91k B:=156k C:=213k D:=251k
+
+	The second line is like `k3', the last line is like `df', but
+	the first line is not available from any other command.
+
+BUGS
+	The last line will be wrong by 1k for the current drive.
+
+SEE ALSO
+	k3, df

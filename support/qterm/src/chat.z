@@ -1,0 +1,993 @@
+; chat.z - handle send/receive chat scripts
+
+.incl	"c:vars"
+
+.var	_sends	0		; send string
+.var	_expect	40		; expect string
+.var	_explen	80		; length of expect string
+.var	_sndlen	81		; length of send string
+.var	_time	82		; time in seconds to try
+.var	_tries	83		; number of times to try before failing
+.var	_yes	84		; new state if success
+.var	_no	85		; new state if failure
+.var	_slow	86		; should we slow down outgoing string
+.var	_curtry	87		; current try at this one
+
+.useg
+.extern	area
+area:				; area where parsed line lives
+sends:	ds	40		; send string
+expect:	ds	40		; expect string
+explen:	ds	1		; length of expect string
+sndlen:	ds	1		; length of send string
+time:	ds	1		; time in seconds to try
+tries:	ds	1		; number of times to try before failing
+yes:	ds	1		; new state if success
+no:	ds	1		; new state if failure
+.extern	slow			; externed for hangup
+slow:	ds	1		; should we slow down outgoing string
+curtry:	ds	1		; current try at this one
+
+.cseg
+
+.macro	table	byte,addr
+	dw	addr
+	db	byte
+.endm
+
+pchat:
+	pop	hl		; needed for chaining
+	pop	hl
+	jr	ncchat		; don't clear vars when we chain
+
+.extern	chat
+chat:
+	call	initch		; set up
+ncchat:	ld	a,1
+	ld	(opentr),a	; clear number of open tries
+	ld	hl,scning
+	dec	(hl)
+	call	gofil		; get and open a file
+	ld	hl,scning
+	inc	(hl)
+	jr	nc,dochat	; open OK, go do it
+	ld	hl,cmdlin
+	call	byp		; look at first char on command line
+	or	a		; no line - give up right now
+	ret	z
+retryo:	ld	hl,(chtusr)
+	inc	h		; turn to a fcb type drive
+	ld	(auxfcb),hl	; replace drive / user in fcb
+	jr	tryaux		; try it again
+
+.extern	ichat			; enter here with command tail at 80: this
+ichat:				; is used to handle files given to qterm when
+				; initially invoked
+	call	initch
+	ld	hl,buffer + 1
+	call	scnfcb		; go parse an fcb
+	call	byp
+	ld	(ppp),hl	; save base of parameter strings
+	call	xferax		; stuff it in auxfcb
+tryaux:	ld	a,(opentr)
+	neg
+	ld	(scning),a
+	call	opnaux		; and open it
+	ld	hl,scning
+	ld	(hl),0		; reset scanning flag
+	inc	hl		; how many tries
+	dec	(hl)		; second time - must be the .LBR failing
+	jr	nc,dochat	; opened OK, go use it
+	ret	nz		; give up if open failed
+	inc	hl
+	call	scnfcb
+	ld	hl,fcb
+	ld	de,auxfcb	; set pointers to fcbs
+	ld	b,34		; 34 bytes to shift
+swplp:	ld	a,(de)
+	ld	c,a
+	ld	a,(hl)
+	ld	(de),a
+	ld	(hl),c		; swap bytes at hl and de
+	inc	hl
+	inc	de		; move pointers
+	djnz	swplp		; loop till done
+	jr	retryo		; and retry the open
+dochat:	call	nz,setlbr	; if .LBR file open, then set to read it
+	jp	c,fnferr	; file not found - complain & exit
+	ld	hl,(ppp)
+	ld	de,0x80		; move the parameters to 0x80
+	ld	b,d
+	ld	c,e		; also 0x80 bytes to move
+	ldir			; shift them down
+	call	prepclv		; prepare the command line variables
+	ld	hl,script
+	ld	(ppp),hl	; save address where lines will go
+	ld	de,script + 1
+	ld	bc,4096 + 1536 - 1
+	xor	a
+	ld	(hl),a
+	ldir			; clear out the script and work areas
+	ld	a,0x7f
+	ld	(b7flag),a	; flag to zap bit 7
+loop:	push	bc		; save line number in bc
+	call	getlin		; get a line
+	pop	bc
+	jr	c,cnvrt		; eof - now convert labels and parameters
+	ld	hl,auxlin
+	ld	a,(hl)
+	or	a
+	jr	z,loop		; ditch blank lines
+	inc	hl
+	cp	'!'		; first char a '!'
+	jr	nz,nobang	; no - so process normally
+	ld	e,(hl)
+	call	incbyp
+	ld	a,e
+	cp	';'		; comment??
+	jr	z,loop		; yes - throw it away _RIGHT_NOW_
+	cp	':'		; label??
+	push	af
+	call	z,label		; yes - save it away
+	pop	af
+	ld	hl,auxlin + 1
+	cp	'$'		; parameter default?
+	jr	nz,nodolr
+	ld	a,0x81		; illegal value - not normally seen
+	ld	(hl),a		; set so we don't change
+nodolr:	cp	'@'
+	jr	nz,nobang
+	ld	a,0x82		; ditto
+	ld	(hl),a
+nobang:	ld	de,auxlin	; where the line is
+	ld	hl,(ppp)	; where we want it to go
+xferlp:	ld	a,(de)
+	ld	(hl),a		; move a byte
+	inc	hl
+	inc	de		; bong the pointers
+	or	a
+	jr	nz,xferlp	; loop till whole line is moved
+	ld	(ppp),hl
+	inc	c
+	ld	de,work - 4
+	sbc	hl,de		; did we overflow?
+	jr	c,loop		; no - back for more
+toobig:	call	ilprt
+	db	'Script is too large (4K maximum)\r\n\0'
+	ret
+
+; come here when script has been read, labels noted and parameters set
+
+cnvrt:	xor	a
+	ld	hl,(ppp)
+	ld	(hl),a		; add an empty line to terminate
+	dec	a
+	ld	(lbrcnt),a	; disable library count
+	jr	doscr
+
+perr:	call	ilprt		; print an error msg
+	db	'Bad line in file\r\n\0'
+	call	dim		; set dim mode
+	ld	hl,auxlin	; point hl at string
+erplp:	ld	a,(hl)		; get a character
+	or	a
+	jr	z,doneer	; exit if done
+	push	hl
+	ld	c,a
+	call	scrout		; send it
+	pop	hl
+	inc	hl
+	jr	erplp
+doneer:	call	crlf		; print a newline
+	jp	main		; and exit to terminal mode
+
+doscr:	ld	a,0xff
+	ld	(b7flag),a	; clear bit 7 zap flag
+	ld	(cvtp),a
+	ld	a,1		; initially state 1
+scrlp:	or	a
+	jr	nz,moresc
+	push	bc
+finisp:	pop	bc
+finis:	call	ilprt		; state zero means we're done
+	db	'\r\nDone\r\n\0'
+	jp	main		; straight to main to avoid a second redraw
+moresc:	ld	c,a		; save state in c for command recovery
+	dec	a
+	ld	b,a
+	ld	hl,script	; point at script
+	jr	z,rps		; if line 1, we're all set
+srlp:	ld	a,(hl)
+	inc	hl
+	or	a
+	jr	nz,srlp		; loop till we hit a null
+	djnz	srlp
+rps:	ld	(redptr),hl	; set up read pointer
+	push	bc		; save line number in c
+	call	getwl
+	jr	c,finisp	; all out of script, exit
+	call	parse		; chop it up
+	jr	c,perr		; drop on an error
+	pop	bc		; line number back to c
+	xor	a
+	ld	(curtry),a	; zero out current try
+retry:	ld	ix,area
+	ld	a,(sndlen)
+	ld	b,a
+	or	(ix + _explen)	; if both strings are empty
+	jr	z,finis		; we fell off end of script: return
+	jp	m,commnd	; explen == -1 => command type line: go do it
+	push	ix
+	pop	hl		; address to hl == address of send string
+	ld	a,b
+	or	a		; zero length?
+	call	nz,sendcs
+	ld	a,(ix + _explen) ; get expect length
+	or	a
+	jr	z,expok		; not expecting anything, match by default.
+	call	clerw2		; clear the work buffer for incoming chars
+	ld	a,(mode)
+	and	lf_bit
+	jr	nz,scanex
+	push	ix
+	call	pexstr
+	db	'\r\nLooking for: \0'
+	pop	ix
+scanex:	ld	c,(ix + _time)	; get time to c
+second:	ld	de,600
+	call	setspd		; set the speed
+qrtrms:	ld	b,96		; hang loose a while
+qmslp:	djnz	qmslp
+	push	hl
+	push	bc
+	call	procch		; ok, see what characters are waiting
+	jr	c,nochar	; nothing waiting - bypass all this mess
+	call	stufw2		; and save in the other buffer
+	ld	hl,work2 + 257 + 64 + 1
+	ld	c,(ix + _explen)
+	or	a
+	sbc	hl,bc		; get that point in buffer
+	ld	de,expect	; expect string address to de
+chekxp:	ld	a,(de)
+	cp	(hl)		; did we match a byte?
+	jr	nz,nochar	; no - skip and try again
+	ldi			; move pointers, adjust and test bc
+	jp	pe,chekxp	; not done: check some more
+gotit:	pop	bc		; got a match!
+	pop	de		; clean up stack first
+expok:	ld	a,(yes)		; get success state transition
+	push	af
+	ld	a,(explen)	; see if we actually had anything to match
+	or	a
+	jr	z,pjs		; nope, so skip all of this
+	ld	a,(mode)
+	and	mat_bit
+	jr	nz,pjs		; don't print if match disabled
+	call	pexstr
+	db	'\r\nMatch: \0'	; tell that we matched
+pjs:	pop	af		; restore success state
+	jp	scrlp
+nochar:	pop	bc
+	pop	hl
+	dec	hl		; count down second timer
+	ld	a,h
+	or	l
+	jp	nz,qrtrms
+	dec	c		; second timeout done?
+	jp	nz,second	; loop back if not
+	ld	a,(mode)
+	and	mat_bit
+	jr	nz,nopf		; don't print if match disabled
+	push	ix
+	call	ilprt
+	db	'\r\nFail\0'	; failed
+	pop	ix
+nopf:	inc	(ix + _curtry)	; bump try count
+	ld	a,(curtry)
+	cp	(ix + _tries)	; did we exceed allowed tries?
+	jr	nc,failed	; yes - complete fail - do state transition
+	ld	a,(mode)
+	and	mat_bit
+	jr	nz,jrt		; don't print if match disabled
+	push	ix
+	call	ilprt
+	db	', retry\r\n\0'
+	pop	ix
+jrt:	jp	retry
+failed:	ld	a,(no)		; get fail state transition
+	push	af
+	call	crlf		; throw a new line
+	jr	pjs
+
+.extern	canscr
+canscr:	call	ilprt		; quit if so
+	db	'\r\nCancelled\r\n\0'
+	jp	main		; long jump to main since we don't know what
+				; state the stack is in
+
+commnd:	ld	a,c		; restore line number from c
+	ld	(prmpfl),a	; use non-zero value to set prompt flag
+	push	af		; save line number
+	ld	hl,cmdret
+	push	hl		; push a return address to get back here
+	ld	a,(time)	; get the command letter
+	call	ucsa		; force upper case
+	ld	hl,chttbl
+.dseg
+chttbl:	table	'.',break
+	table	0x2c,hangup	; we'd like to say ',',hangup but ZSM barfs
+	table	0x82,eval	; was @, but converted during readin to avoid
+				; getwl substitute problems
+	table	0x81,setstr	; was $, changed for the same reason.
+	table	'#',test
+	table	'%',stest
+	table	'&',mattog
+	table	'<',sinput
+	table	'>',messag
+	table	'~',cf
+	table	'[',multi
+	table	'(',fileio
+	table	'B',baud
+	table	'C',catch
+	table	'E',echo
+	table	'H',hdxtog
+	table	'J',jctog
+	table	'K',ldfnk
+	table	'L',lftog
+	table	'M',msbtog
+	table	'N',newdsk
+	table	'O',optog
+	table	'P',print
+	table	'Q',quit
+	table	'R',recv
+	table	'S',send
+	table	'U',0x0276
+	table	'V',vttog
+	table	'W',witog
+	table	'X',pchat
+	table	'Y',hold
+	table	'Z',cclose
+endctb:
+.cseg
+	ld	b,{endctb - chttbl} / 3
+tbllp:	ld	e,(hl)
+	inc	hl
+	ld	d,(hl)		; get next table entry to de
+	inc	hl
+	cp	(hl)		; check byte in a vs. table letter
+	inc	hl
+	push	de		; push entry point
+	ret	z		; if we matched this takes us to the code
+	pop	de		; restore stack
+	djnz	tbllp		; loop till we run out of table
+	pop	hl		; clean up stack
+cmdret:	xor	a
+	ld	(prmpfl),a	; clear prompt flag
+	pop	af		; get line number back
+	inc	a		; bump by one: commands always succeed
+	jp	scrlp		; loop back for more
+
+.extern	sendcs
+sendcs:
+	inc	b		; clear the zero flag, and account for an
+				; extra djnz
+	push	bc
+	push	hl		; stack these for later popping
+	jr	sendi		; and jump to where we delay a bit
+
+sendcl:	push	bc
+	ld	a,(hl)		; get next character
+	inc	hl		; bump
+	push	hl		; and save pointer
+	cp	0xff		; was it a -1?
+	jr	nz,nosbrk	; no - check for -2
+	call	break		; send a break
+	jr	chrsnt
+nosbrk:	cp	0xfe		; check for -2
+	jr	nz,mdmchr	; no - send char normally
+	ld	de,1200		; set for a 1 second delay
+	call	msip		; 1000 1/1000th of a second == 1 second
+	jr	chrsnt		; and check for incoming chars
+mdmchr:	push	af
+	call	modop		; send the character
+	pop	af		; restore back to a
+chrsnt:	call	lstmod		; keep tabs on incoming chars
+	call	lstmod
+	ld	a,(slow)
+	or	a		; do we need to slow it down
+sendi:	call	nz,tenth	; wait a while if so
+	pop	hl
+	pop	bc
+	djnz	sendcl		; and keep on sending
+	ret
+
+parse:	ld	hl,area		; point de at this record
+	push	hl
+	ld	de,area + 1
+	ld	bc,_curtry
+	ld	(hl),b
+	ldir			; nuke parse area
+	pop	de		; restore input pointer to de
+	ld	hl,auxlin
+	ld	a,(hl)
+	cp	'!'		; bang?
+	jr	nz,nopb		; nope - parse as usual
+	inc	hl
+	ld	a,(hl)		; get command letter
+	inc	hl
+	ld	bc,_explen	; move enough stuff to fill to explen
+	ldir
+	ex	de,hl
+	ld	(hl),b		; null terminate just in case
+	inc	hl
+	ld	(hl),-1		; set -1 in sndlen as a flag
+	inc	hl
+	ld	(hl),a		; and save the letter
+	ret
+nopb:	ld	hl,slow
+	ld	(hl),b
+	ld	a,(auxlin)	; get delimiter
+	cp	'z' + 1		; greater than 'z'?
+	jr	c,noslow	; skip if not
+	ld	(hl),a		; else set slow flag
+noslow:	ld	hl,auxlin	; point hl at incoming line
+	call	scanst		; scan send string
+	ret	c
+	ld	(sndlen),a	; save length
+	call	scanst		; scan expect string
+	ld	(explen),a
+	ret	c		; exit if error
+	xor	a
+	call	rednum		; parse time
+	ret	c
+	or	a
+	jr	nz,gottim
+	ld	a,15		; if no time or zero, default to 15
+gottim:	ld	de,time
+	ld	(de),a		; save the time
+	inc	de
+	xor	a
+	call	rednum		; scan tries
+	ret	c
+	or	a
+	jr	nz,gottry
+	inc	a		; if none or zero set to 1
+gottry:	ld	(de),a
+	inc	de
+	pop	bc
+	ex	(sp),hl
+	ld	a,l		; get cur line num to a
+	ex	(sp),hl
+	push	bc
+	inc	a		; add one to get default yes
+	call	rednum		; read success
+	ret	c
+	ld	(de),a
+	inc	de
+	xor	a
+	call	rednum		; and finally the fail value
+	ret	c
+	ld	(de),a
+	inc	a
+	ret
+
+.extern	scanst
+scanst:	ld	b,40		; count max of 40 chars
+	ld	a,(hl)		; get the delimiter to a
+	ld	(de),a
+	or	a
+	ret	z		; return with z to show empty line
+	ld	c,a		; copy to c
+	inc	hl		; point to next char
+
+.extern	scnstp
+scnstp:	call	parst		; chomp up the string
+	ret	c
+donest:	ld	a,40
+	sub	b		; get length to a
+	dec	b
+	inc	b		; test b for zero
+	jr	z,bzero		; if b not zero
+setde:	inc	de		; bump de
+	djnz	setde		; till b runs out
+bzero:	or	a		; clear the carry
+	ret
+
+.extern	parst
+parst:
+	xor	a
+	ld	(de),a		; add a trailing null
+	ld	a,(hl)		; get next char
+	cp	c		; delimiter?
+	ret	z		; yes - all done on this string
+	or	a
+	ccf
+	ret	z		; handle error
+	inc	hl
+	cp	'\\'		; backslash gets special treatment
+	call	z,backsl	; parse the backslash escape
+	inc	b
+	dec	b		; any space left?
+	jr	z,parst		; no - just get end of line
+	dec	b
+	ld	(de),a		; save the char away
+	inc	de
+	jr	parst
+
+.extern	backsl
+backsl:	ld	a,(hl)		; get char after backslash
+	inc	hl
+	or	a		; end of string?
+	scf			; flip carry to true
+	ret	z		; return on zero w/ error
+	cp	'k'
+	jr	nz,nobrk
+	ld	a,0xff
+	ret
+nobrk:	cp	'd'
+	jr	nz,nodel
+	ld	a,0xfe
+	ret
+nodel:	cp	'f'
+	jr	nz,noff
+	ld	a,'\f'
+	ret
+noff:	cp	'b'
+	jr	nz,nobksp
+	ld	a,'\b'
+	ret
+nobksp:	cp	't'
+	jr	nz,notab
+	ld	a,'\t'
+	ret
+notab:	cp	'n'
+	jr	nz,nonl
+	ld	a,'\n'
+	ret
+nonl:	cp	'r'
+	jr	nz,nocr
+	ld	a,'\r'
+	ret
+nocr:	cp	'e'
+	jr	nz,noesc
+	ld	a,'\e'
+	ret
+noesc:	cp	'x'
+	jr	nz,nohex
+	push	bc
+	ld	bc,0x0200
+gethex:	ld	a,(hl)
+	sub	'0'
+	cp	10
+	jr	c,hexok		; valid digit - use it
+	sub	'A' - '0'
+	cp	6
+	jr	c,hexlok	; valid A-F
+	sub	'a' - 'A'
+	cp	6
+	jr	c,hexlok	; valid a-f
+	ld	a,b
+	add	a,0xfe		; check if b was still 2
+	jr	endoct
+hexlok:	add	a,10		; letter values need 10 added
+hexok:	inc	hl		; bump pointer
+	sla	c
+	sla	c
+	sla	c
+	sla	c		; c *= 16
+	or	c		; a += c
+	ld	c,a	
+	djnz	gethex
+	jr	endoct
+nohex:	sub	'0'		; check for octal digit
+	cp	8
+	jr	c,octal		; got one - handle it
+	add	a,'0'		; restore character
+	or	a		; clear carry
+	ret
+octal:	push	bc
+	ld	b,2		; 2 more chars to get
+	ld	c,a		; save current value in c
+getoct:	ld	a,(hl)		; get another char
+	sub	'0'
+	cp	8		; convert and test
+	jr	nc,endoct	; no good - skip
+	inc	hl		; now we move the pointer
+	sla	c
+	sla	c
+	sla	c		; c *= 8
+	or	c		; a += c (and clear the carry)
+	ld	c,a		; back to c
+	djnz	getoct		; loop till three chars done
+endoct:	ld	a,c		; char back from c
+	pop	bc
+	ret
+
+rednum:	ex	af,af'		; save default value in a'
+	ld	a,(hl)
+	or	a		; get and test a delimiter
+	jr	z,usedef	; end of string - use default
+	inc	hl
+	ld	c,a		; save it away
+	ld	a,(hl)
+	cp	c		; check see if anything in field
+	jr	nz,isnum	; yes - go parse it
+usedef:	ex	af,af'
+	ret
+isnum:	ld	b,0
+scnnum:	ld	a,(hl)
+	or	a
+	jr	z,usedef	; end of string: exit
+	cp	c
+	jr	z,gotnum	; found delimiter: exit
+	inc	hl
+	sub	'0'
+	cp	10		; did we find a digit?
+	ccf			; flip carry: set => error
+	ret	c		; so return
+	push	af		; save converted digit
+	ld	a,b
+	add	a,a
+	add	a,a
+	add	a,b
+	add	a,a
+	ld	b,a		; b *= 10
+	pop	af
+	add	a,b
+	ld	b,a		; b += new digit
+	jr	scnnum
+gotnum:	ld	a,b
+	ret
+
+; label saves a label / line number pair in the symbol table
+
+label:	push	hl		; save input pointer
+	ld	hl,work + 1016	; look in symbol table
+	ld	de,8		; step 8 at a time
+findlb:	add	hl,de		; move to next
+	ld	a,(hl)
+	or	a		; end of table?
+	jr	nz,findlb	; no - look at next one
+	pop	de		; input pointer back to de
+	ld	b,7		; 7 bytes of label
+scanit:	ld	a,(de)		; get an input byte
+	or	a
+	jr	z,elbl		; null
+	cp	' '
+	jr	z,elbl		; or space terminates it
+	ld	(hl),a
+	inc	de
+	inc	hl
+	djnz	scanit		; loop till 7 bytes moved
+	jr	addnum		; go add the line number
+elbl:	ld	(hl),0
+	inc	hl		; zero fill
+	djnz	elbl
+addnum:	ld	(hl),c		; save the line number
+	xor	a
+	inc	hl
+	ld	(hl),a		; zero fill end of symtab
+	ld	(work + 1528),a ; prevent overflow
+	ret
+
+; flabel - find a label / line number pair in the symbol table
+
+flabel:	ex	de,hl		; label pointer to de
+	ld	hl,work + 1016	; look in symbol table
+flblp:	ld	bc,8		; step 8 at a time
+	add	hl,bc		; move to next
+	ld	a,(hl)
+	or	a		; end of table?
+	jr	z,exdert	; yes - undefined labels do odd things
+	ld	a,(de)
+	cp	(hl)		; check first char
+	jr	nz,flblp	; nope - try again
+	push	hl
+	push	de		; save pointers
+	ld	b,7		; 7 bytes of label
+fscnit:	ld	a,(de)		; get an input byte
+	or	a
+	jr	z,nomtch	; end of input
+	cp	(hl)
+	jr	nz,nomtch	; no match, but it may be end of label
+	inc	de		; bump pointers
+endok:	inc	hl
+	djnz	fscnit		; all 7 bytes done: we got it
+	ld	a,(hl)		; get line number to a
+	pop	hl
+	pop	hl		; clean stack
+exdert:	ex	de,hl		; input pointer back to hl
+	ret			; and home we go
+nomtch:	ld	a,(hl)
+	or	a
+	jr	z,endok		; aha - end of entry in symtab, fake it
+	pop	de
+	pop	hl		; no good, restore pointers
+	jr	flblp		; back to look at the next one
+
+; fparam - find parameter from array at 0x80 whose number is in a
+
+.extern	fparam
+fparam:	ld	hl,strngs	; point at strings
+fplp:	or	a		; finished?
+	ret	z		; return if so - hl points to string
+	ld	e,a		; save a
+byppl:	ld	a,(hl)		; step over non-null characters
+	inc	hl
+	or	a
+	jr	nz,byppl
+	ld	a,e		; get string number back
+	dec	a		; one more done
+	jr	fplp
+
+; kilstr - kill string parameter hl points to
+
+.extern	kilstr
+kilstr:	ld	a,(hl)
+	or	a
+	ret	z		; if it's already empty, we're done
+	push	hl		; save hl for later
+	ld	e,l
+	ld	d,h
+ksel:	inc	hl		; loop to find end of old string
+	ld	a,(hl)
+	or	a
+	jr	nz,ksel
+shftlp:	ld	a,(hl)		; by now hl points to end, de to string
+	ldi			; move another byte
+	inc	a		; test for end of data
+	jr	nz,shftlp	; loop till all done
+	ex	de,hl
+xfill:	ld	(hl),0xff	; replace all the 0xffs
+	inc	hl
+	ld	a,(hl)
+	cp	'A'		; we've got an 'A' at the end as a stopper
+	jr	nz,xfill
+	pop	hl		; restore pointer to string
+	ret			; all done
+
+; setstr - set a string variable
+
+setstr:	call	areabu		; point hl at command tail
+	call	pnum
+	ret	nc
+	inc	hl		; skip over letter
+	push	hl		; and save address of source
+	push	af		; save parm number
+	call	fparam		; get ...
+	pop	af
+	cp	9
+	jr	nc,repl		; 9 or above is letter string - force replace
+	ld	a,(hl)
+	or	a		; anything there yet?
+	jr	nz,pbcret	; yes - do nothing
+repl:	call	kilstr		; and kill current string
+	ex	(sp),hl		; save target, restore source
+	call	byp		; strip white space
+	ex	de,hl		; source to de
+	pop	hl		; dest back to hl
+	xor	a		; want this null terminated
+				; and fall into insstr to put it in place
+
+; insstr - shift string addressed by de to string var at hl, use char in
+; a (or null) to terminate string at de
+
+.extern	insstr
+insstr:	push	bc		; save bc
+	ld	b,a		; term char to b
+	ld	c,0		; count in c
+	push	de		; save source in de
+fslen:	ld	a,(de)
+	or	a		; null
+	jr	z,estr1		; ends the string
+	cp	b		; term char?
+	jr	z,estr		; yup end of string as well
+	inc	c		; count
+	inc	de		; and move pointer
+	jr	fslen
+estr:	xor	a
+estr1:	ld	b,a		; set len to word in bc
+	cp	c
+	jr	z,pop2r
+	push	hl		; save target in hl
+	push	bc		; and length as well
+	inc	bc
+	ld	hl,strngs + 511	; start from very top of string space
+	cpdr			; look for 0 on end of last string
+	pop	bc
+	jr	nz,isok		; nz means we didn't find it which is OK
+	pop	hl		; get hl back
+pop2r:	pop	bc
+	pop	bc		; clean up stack, de points to end already
+	ret			; exit right now
+isok:	pop	de		; target back to de
+	inc	hl
+	push	hl		; source of lddr on stack
+	sbc	hl,de		; hl contains count to move up
+	push	bc		; length back on stack
+	ld	b,h
+	ld	c,l		; count to move to bc
+	pop	hl		; length back to hl
+	ex	(sp),hl		; resave length, get lower move point
+	push	de		; target back on stack
+	ld	de,strngs + 511
+	inc	bc		; why in the name of H*LL we have to inc this
+	inc	bc		; twice, I don't know. However, it works.
+	lddr			; shift it all up to make the hole
+	pop	de		; target back
+	pop	bc		; length of string back
+	pop	hl		; source
+	push	de		; save target
+	ldir			; move string into place
+	ex	de,hl		; updated source pointer back to de
+	pop	hl		; original hl back
+pbcret:	pop	bc		; restore bc
+	ret
+
+pnum:;	call	ucsa
+	sub	'1'
+	cp	9		; is it valid
+	ret	c		; default param
+	sub	'A' - '1'
+	cp	26		; valid letter?
+	ret	nc		; return if not
+	add	a,9		; convert above parameters
+	scf			; set carry to show it's OK
+	ret
+
+; prepclv - convert command line args to $1 through $9
+
+prepclv:
+	ld	de,0x80		; point at command line params
+	ld	b,0		; set counter to zero
+pcvlp:	push	de
+	ld	a,b
+	call	fparam		; address this parameter
+	call	kilstr		; get rid of the old
+	pop	de
+	ex	de,hl
+	call	byp		; find text
+	ex	de,hl
+	ld	a,' '
+	call	insstr		; drop the string in place
+	inc	b
+	ld	a,b
+	cp	9		; loop till nine are done
+	jr	nz,pcvlp
+	ret
+
+; get a line from wherever we're reading, stuff it in auxlin
+
+getwl:	ld	hl,(redptr)	; pick up read pointer
+	ld	a,(hl)
+	or	a		; first byte zero?
+	scf
+	ret	z		; return carry to show end of input
+	ld	de,auxlin	; auxlin is where we'll put it
+gwlp:	ld	a,(hl)		; get a byte
+	cp	'$'
+	jr	z,gwstr		; substitute strings,
+	cp	'@'
+	jr	z,gwnum		; numbers
+	cp	'`'
+	jr	z,gwlbl		; and labels
+nullt:	ld	a,(hl)
+	ldi			; otherwise just transfer
+	or	a		; and test the byte
+	jr	nz,gwlp		; loop if more
+	ld	(redptr),hl	; save updated read pointer
+	ret
+
+gwstr:	inc	hl		; point at letter code for string wanted
+	call	ucsahl
+	; ld	a,(hl)		; get it
+	call	pnum		; see if it's a valid string number
+	jr	nc,nullt	; if not just copy the character as is
+	inc	hl
+	push	hl		; save string we're reading from
+	push	de
+	call	fparam		; get the string
+	pop	de
+scp:	ld	a,(hl)
+	or	a
+	jr	z,phlgwl
+	ldi
+	jr	scp
+phlgwl:	pop	hl
+	jr	gwlp
+
+gwnum:	inc	hl		; point at variable letter
+	call	ucsahl		; convert to upper case
+	sub	'A'		; make it into an index
+	cp	26		; in range?
+	jr	nc,nullt	; nope - convert as a straight letter
+	inc	hl		; skip over the variable number
+	push	hl		; save source
+	push	de		; and target
+	ld	e,a
+	ld	d,0
+	ld	hl,vars
+	add	hl,de
+	ld	a,(hl)		; fetch the value
+	pop	hl		; restore target to hl
+	jr	dumpa
+
+gwlbl:	inc	hl
+	push	de		; save target
+	call	flabel		; find the label
+	inc	a
+	ex	(sp),hl		; restore target, save source
+
+dumpa:	ld	(hl),'0' - 1	; put in hundreds digit
+	ld	e,0
+hundlp:	inc	(hl)
+	sub	100
+	jr	nc,hundlp
+	add	a,100
+	call	cinc
+	ld	(hl),'0' - 1
+tenlp:	inc	(hl)
+	sub	10
+	jr	nc,tenlp
+	call	cinc
+	add	a,'0' + 10
+	ld	(hl),a
+	inc	hl
+	ex	de,hl		; target back to de
+	pop	hl		; source to hl
+	jr	gwlp		; and we're done
+
+; cinc - inc hl only if (hl) != 0: used to format numbers
+
+cinc:	dec	e
+	inc	e		; test e
+	jr	nz,docinc	; already set, force a save
+	ld	c,a		; save a
+	ld	a,(hl)
+	cp	'0'		; pointing at a zero?
+	ld	a,c		; restore a
+	ret	z		; return if so,
+docinc:	inc	hl		; otherwise bump hl
+	inc	e		; and set e
+	ret
+
+; print expect string, but ignore control characters
+
+pexstr:	call	dim		; dim mode
+	pop	hl
+	call	prtslp		; print inline string
+	push	hl		; resave return address
+	ld	hl,expect
+	ld	bc,(explen - 1)	; get explen to b
+prtncc:	ld	a,(hl)		; get a character
+	cp	' '
+	jr	c,nopcc		; less than space, don't print
+	cp	0x7f		; check >= delete
+	push	bc
+	push	hl
+	ld	c,a		; char to c for printout
+	call	c,scrout	; out it goes if legal
+	pop	hl
+	pop	bc
+nopcc:	inc	hl		; move pointer
+	djnz	prtncc		; loop till all done
+	jp	crlf
+
+.dseg
+.extern	scning
+scning:	db	0
+.extern	opentr
+opentr:	db	0		; should be useg, but need to bump hl for lbrs
+.extern	lbrs
+lbrs:	db	'/QTERM.LBR\0'	; name of qterm script library
+
+.useg
+redptr:	ds	2
+.extern	ppp
+ppp:	ds	2		; parameter pointer
+.extern	chtusr
+chtusr:	ds	1		; extra drive / user to try for chat scripts
+.extern	chtdrv
+chtdrv:	ds	1
+cvtp:	ds	1		; do we convert params and numbers in getwl
+

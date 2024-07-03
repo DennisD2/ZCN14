@@ -1,0 +1,271 @@
+; baud.z - alter baud rate, and data word format
+
+.var	cmdlin	0x80
+
+.macro	baudtb	speed
+	dw	speed
+	dw	b`speed
+.endm
+
+.extern	baud
+baud:
+	call	prompt
+	db	'Baud rate? \0'	; see what is wanted
+	ld	hl,cmdlin - 1
+scanp:	inc	hl		; first look for +ch
+	ld	a,(hl)
+	or	a
+	jr	z,noplus	; didn't find one, on to the next bit
+	xor	'+'
+	jr	nz,scanp	; not this char, on to the next
+	ld	(hl),a		; replace the '+' so we have a revised end
+	inc	hl
+	ld	bc,0x0200	; b = 2: 2 chars, c = 0 for delimiter
+	ld	de,cschr	; save them in cschr and cqchr
+	call	parst		; crunch up the string
+noplus:	ld	hl,cmdlin - 1
+scansl:	inc	hl		; then look for a -del
+	ld	a,(hl)
+	or	a
+	jr	z,nodel		; no '-' found: process normally
+	xor	'-'
+	jr	nz,scansl	; this was not a '-', on to the next
+	ld	(hl),a		; put a null in to make the '-' vanish
+	call	incbyp		; skip leading space
+	or	a		; anything there?
+	jr	z,nodel		; no - go crunch the rest
+	cp	'*'		; '*' as a place holder?
+	jr	z,nocsdl	; skip if no ^S delay
+	ld	de,1
+	call	scanm		; get a number, but default if none given
+	ld	a,e
+	ld	(csdely),a	; save in ^S delay
+nocsdl:	call	incbyp
+	or	a
+	jr	z,nodel		; exit now if nothing left
+	cp	'*'
+	jr	z,nochdl	; skip if no character delay
+	sub	'0'
+	cp	10		; check for a number
+	ld	de,ecflg
+	ld	(de),a		; set echo check flag
+	jr	nc,lcnum	; jump if not a number - this sets flag
+	dec	hl		; hl down to account for coming inx
+	xor	a		; clear acc
+	ld	(de),a		; and thus the echo check flag
+lcnum:	inc	hl
+	ld	de,0
+	call	scanm		; get another
+	ld	a,e
+	ld	(chd),a		; and save a character delay
+nochdl:	call	incbyp
+	or	a
+	jr	z,nodel		; exit now if nothing left
+	cp	'*'
+	jr	z,nodel		; and exit if a star
+	ld	de,lfecho
+	ld	(de),a		; set linefeed echo flag
+	sub	'0'
+	cp	10		; first char a digit
+	jr	nc,lfnum	; jump if not
+	dec	hl		; otherwise backstep hl
+	xor	a
+	ld	(de),a		; and clear linefeed echo flag
+lfnum:	inc	hl
+	ld	de,300
+	call	scanm
+	ld	(nld),de	; finally a newline delay
+nodel:	ld	hl,cmdlin
+	call	byp
+	ld	b,h
+	ld	c,l		; point bc at first non-white-space in line
+	ld	a,(bc)
+	or	a
+	ret	z		; end of line so do nothing
+	cp	'*'		; was a '*' skip over baud rate set
+	jp	z,bmode
+	dec	bc
+scan:	inc	bc		; now bypass leading zeros
+	ld	a,(bc)
+	cp	'0'
+	jr	z,scan
+	ld	hl,0		; hl gets numeric value of rate
+	ld	ix,rate		; ix points to where string will live
+loop:	ld	a,(bc)
+	sub	'0'
+	cp	10		; get the next character & check it's a digit
+	ld	e,l
+	ld	d,h
+	jr	nc,gotit	; nope - we've finished
+	add	hl,hl		; * 2
+	add	hl,hl		; * 4
+	add	hl,de		; * 5
+	add	hl,hl		; * 10
+	ld	e,a
+	ld	d,0		; new digit to de
+	add	hl,de		; add it in
+	ld	a,(bc)		; get the character again
+	ld	(ix),a		; save in string
+	inc	ix
+	inc	bc		; move both pointers
+	jr	loop		; and do it again
+gotit:	ld	a,d
+	or	e
+	jr	z,usage		; zero baud rate means we should complain
+	ld	a,' '
+	push	ix
+	pop	hl		; copy string save pointer to hl
+	ld	(hl),a
+	inc	hl
+	ld	(hl),a
+	inc	hl
+	ld	(hl),a		; add three spaces
+	ld	a,(bc)		; look at input char following rate
+	or	a
+	jr	z,cmdok		; zero byte is ok
+	cp	' '
+	jr	z,cmdok		; and so is a space
+usage:	call	ilprt		; but we complain about anything else
+	db	'Specify <rate> <mode>\r\n\0'
+	ret
+cmdok:	ld	hl,table	; point at the table
+.dseg
+table:	baudtb	38400
+	baudtb	19200
+	baudtb	9600
+	baudtb	4800
+	baudtb	2400
+	baudtb	1200
+	baudtb	600
+	baudtb	300
+endtbl:
+
+.cseg
+	push	bc		; save address in input string
+	ld	b,{endtbl - table} / 4
+scntbl:	ld	a,(hl)
+	cp	e
+	inc	hl		; check low byte of baud rate
+	jr	nz,bad2		; skip if no match
+	ld	a,(hl)
+	cp	d		; check high byte
+	jr	z,gottbl	; match! - we got it
+bad2:	inc	hl		; this entry no good
+	inc	hl
+	inc	hl		; skip over it
+	djnz	scntbl		; and loop till we run out
+badbau:	call	ilprt		; go complain
+	db	'Error: invalid baud rate\r\n\0'
+	pop	hl		; clean up the stack
+	ret			; and exit
+gottbl:	inc	hl
+	ld	e,(hl)
+	inc	hl		; get address of baud value entry in
+	ld	d,(hl)		; configuration area
+	ld	a,(de)		; get the baud byte itself
+	inc	de
+	ld	b,a		; save in b
+	ld	a,(de)		; get the flag byte
+	or	a		; is it zero?
+	jr	z,badbau	; yes - go complain
+	ld	a,b
+	call	setbd		; go set the baud rate
+	call	ilprt		; and say what we did
+	db	'Baud rate set to '
+
+.extern	rate
+rate:	db	'         \r\n\0'
+	pop	bc		; get the string address back to bc
+	dec	bc
+bmode:	inc	bc
+	ld	a,(bc)
+	cp	' '
+	jr	z,bmode		; do a byp on bc
+	or	a
+	ret	z		; return now on end of string
+	ld	e,0		; set e zero for mode selection
+	ld	ix,modsav	; point ix at save area
+	ld	(ix + 0),a	; save first byte in data bit count
+	cp	'7'
+	jr	z,seven		; better be '7'
+	cp	'8'
+	jr	z,eight		; or '8'
+badmod:	call	ilprt		; complain if it's wrong
+	db	'Modes are [87][EON][12]\r\n\0'
+	ret
+eight:	inc	e		; set bit 0 in e for 8 bit options
+seven:	inc	bc
+	ld	a,(bc)		; get the next character
+	and	0x5f		; force upper case
+	ld	(ix + 2),a	; save it away
+	cp	'N'
+	jr	z,nopty		; 'N' => no parity
+	cp	'O'
+	jr	z,odd		; 'O' => odd parity
+	cp	'E'
+	jr	nz,badmod	; 'E' => even parity: complain if no match
+	set	2,e
+	jr	nopty		; set bit 2 to select even parity options
+odd:	set	3,e		; set bit 3 to select odd parity options
+nopty:	inc	bc
+	ld	a,(bc)		; look at the last character
+	ld	(ix + 4),a	; and save it away
+	cp	'1'
+	jr	z,one		; better be '1'
+	cp	'2'
+	jr	nz,badmod	; or '2' - complain if it's neither
+	set	1,e		; set bit 1 for 2 data bit options
+one:	inc	bc
+	ld	a,(bc)
+	cp	' '
+	jr	z,one		; skip any trailing spaces
+	or	a
+	jp	nz,usage	; but complain if there was more junk
+	ld	d,0		; extend index in e to 16 bits
+	ld	hl,modtab
+	add	hl,de		; index into table in configuration area
+	ld	a,(hl)		; get the byte
+	call	setmod		; go set the modes
+	call	ilprt
+	db	'Mode set to '
+
+.extern	modsav
+modsav:	db	' , , \r\n\0'	; and say what we did
+	ret
+
+scanm:	ld	a,(hl)
+	sub	'0'
+	cp	10		; did we get a digit?
+	jr	nc,donenm	; no - use default in de
+	ld	de,0		; set de zero for answer
+scanlp:	ld	a,(hl)
+	sub	'0'
+	cp	10		; another digit?
+donenm:	jp	nc,unbyp	; exit if not - answer in de
+	push	hl		; save pointer
+	ld	h,d
+	ld	l,e
+	add	hl,hl
+	add	hl,hl
+	add	hl,de
+	add	hl,hl		; hl = de * 10
+	ld	e,a
+	ld	d,0
+	add	hl,de		; + new digit
+	ex	de,hl		; back to de
+	pop	hl
+	inc	hl		; look at next character
+	jr	scanlp
+
+.dseg
+.extern	csdely
+csdely:	db	1
+.extern	nld
+nld:	dw	300
+.extern	chd
+chd:	db	0
+.extern cschr
+cschr:	db	's' & 0x1f
+.extern	cqchr
+cqchr:	db	'q' & 0x1f
+

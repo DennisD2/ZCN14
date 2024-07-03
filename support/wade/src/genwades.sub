@@ -1,0 +1,16 @@
+;Generate WADE for Stand-Alone operation (no symbols, no extended mem)
+;Set Equates in MONOPT.LIB accordingly
+;Check RAM address in link for correspondence to host system
+;
+rmac monhdl $$sz pz
+rmac monit $$sz pz
+rmac monbreak $$sz pz
+rmac montab $$sz pz
+rmac mondis $$sz pz
+rmac monsub $$sz pz
+rmac monexpr $$sz pz
+rmac monasm $$sz pz
+rmac monsyms $$sz pz
+link monhdl=monhdl,monit,monbreak,montab,mondis,monsub,monexpr,monasm,monsyms,codend[l0,dcd00]
+striph monhdl.com
+

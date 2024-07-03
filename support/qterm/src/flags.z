@@ -1,0 +1,133 @@
+; flags.z - code to handle trivial flag toggles
+
+.incl	"c:termcap"
+
+.var	ipbuf	0x80
+
+.extern	msbtog
+msbtog:	call	force		; go see what we're doing to the flag
+	ld	hl,bmask	; address where mask lives
+	jr	z,domsbt	; zero => straight toggle
+	sub	'0'		; was it a '0'?
+	res	7,(hl)
+	jr	z,domsbt	; bit 7 off (so it gets turned on) if so
+	set	7,(hl)		; else bit 7 on, so it gets turned off
+domsbt:	ld	a,(hl)
+	xor	0x80		; toggle the bit
+	ld	(hl),a
+	inc	a		; now 0xff => no mask becomes zero
+	ld	de,bit7ms	; point de at the "label"
+.dseg
+bit7ms:	db	'Bit 7 masking\0'
+.cseg
+	jr	pdisen		; and print whether we turned it on or off
+
+.extern	echo
+echo:	ld	hl,eflg		; point at echo flag
+	ld	de,ecomsg	; and message
+.dseg
+ecomsg:	db	'Remote echo\0'
+.cseg
+	jr	toggle		; go do the toggle
+
+.extern	hdxtog
+hdxtog:	ld	hl,hflg		; same as echo
+	ld	de,hdxmsg
+.dseg
+hdxmsg:	db	'Half duplex\0'
+.cseg
+	jr	toggle
+
+.extern	jctog
+jctog:	ld	hl,jflg		; same as echo
+	ld	de,jcmsg
+.dseg
+jcmsg:	db	'Control character discard\0'
+.cseg
+	jr	toggle
+
+.extern	lftog
+lftog:	ld	hl,lflg		; same as echo
+	ld	de,lfmsg
+.dseg
+lfmsg:	db	'Line feed in print\0'
+.cseg
+	jr	toggle
+
+.extern	optog
+optog:	ld	hl,oflg		; same as echo
+	ld	de,opmsg
+.dseg
+opmsg:	db	'Output to printer\0'
+.cseg
+	jr	toggle
+
+.extern	vttog
+vttog:	call	initv
+	ld	hl,vflg
+	ld	de,vtmsg
+.dseg
+vtmsg:	db	'VT-100 emulation\0'
+.cseg
+toggle:	call	togflg		; flip the flag as needed
+pdisen:	push	af		; save flag state
+	push	de		; and message
+	call	crlf		; throw a new line
+	call	dim		; go into dim mode
+	pop	hl
+	call	prtslp		; print the message
+	pop	af		; restore the flag state
+	jr	z,pdis		; zero - it got disabled
+	call	ilprt
+	db	' enabled\0'	; print the enabled message
+	jr	finis
+pdis:	call	ilprt
+	db	' disabled\0'	; or disabled
+finis:	jp	crlf
+
+.extern	togflg
+togflg:	push	hl
+	push	de		; save some registers
+	call	force		; get input state depending on if we're in
+	pop	de		; a chat script
+	pop	hl
+	jr	z,doftog	; zero => straight toggle
+	sub	'0'		; '0' => turn it off
+	set	0,(hl)		; turn the bit on so the xor turns it off
+	jr	z,doftog
+	res	0,(hl)		; else clear bit - xor will set it
+doftog:	ld	a,(hl)
+	xor	1		; flip the bit
+	ld	(hl),a
+	ret
+
+force:	ld	a,(prmpfl)
+	or	a
+	ret	z		; return zero if we're not in a chat script
+	call	areabp		; get the character
+	or	a		; see if one was given
+	ret
+
+.dseg
+.extern	bmask
+bmask:	db	0xff
+.extern	jflg
+jflg:	db	0
+.extern	lflg
+lflg:	db	0
+.extern	oflg
+oflg:	db	0
+
+; These next to _MUST_ remain adjacent, and in this order
+
+.extern	vflg
+vflg:	db	0
+.extern	wflg
+wflg:	db	0
+
+.extern	hflg
+hflg:	db	0
+
+.extern	eflg
+eflg:	db	0
+

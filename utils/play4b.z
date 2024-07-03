@@ -1,0 +1,211 @@
+;play4b - 4-bit 8kHz-ish sample player for NC100/NC150/NC200.
+;Public domain by Russell Marks, 1996/2022.
+;
+;Does 4-bit via PWM on effectively 1-bit speaker.
+;
+;Pressing the on/off switch while playing aborts (on NC100/NC150).
+
+org 0100h
+
+samlen		equ samlenop+1
+
+bdos		equ 5
+userfcb1	equ 05ch
+bdprint		equ 9
+bfopen		equ 15
+bfread		equ 20
+bsetdma		equ 26
+
+
+ld a,(066h)
+cp 0f7h
+ret nz
+
+ld a,(7)
+ld (chkop+1),a
+
+ld sp,0100h	;just somewhere to keep it out of the way
+
+ld a,(userfcb1+1)
+cp 32
+jr z,usage
+
+call loadfile
+
+;hl now points to after end of sample
+ld de,samaddr
+and a
+sbc hl,de
+ld (samlen),hl
+
+;give drive lights a decent chance to clear
+halt
+halt
+halt
+
+jr playsam
+
+
+musage:		defb 'usage: play4b [file]$'
+mnofile:	defb 'No file$'
+mtoobig:	defb 'Too big$'
+
+
+usage:
+ld de,musage
+printexit:
+ld c,bdprint
+call bdos
+rst 0
+
+
+loadfile:
+ld de,userfcb1
+ld c,bfopen
+call bdos
+inc a
+jr nz,lf1
+ld de,mnofile
+jr printexit
+
+lf1:
+ld hl,samaddr
+
+iflp:
+push hl
+ex de,hl
+ld c,bsetdma
+call bdos
+ld de,userfcb1
+ld c,bfread
+call bdos
+pop hl
+and a
+ret nz
+ld de,128
+add hl,de
+ld a,h
+chkop: cp 0	;modified (to high byte of BDOS addr)
+jr nz,iflp
+
+ld de,mtoobig
+jr printexit
+
+
+;PWM a 4-bit sample through the speaker.
+;But this is some quite sloppy PWM, to be honest.
+;Takes 516 cycles (see below).
+;entry: sample in a
+pwma macro
+;we play 17 total, so as to always do both on and off.
+
+;38 cycles before first loop
+
+ld d,a		;4
+inc d		;4
+xor a		;4
+ld e,a		;4
+out (051h),a	;11
+out (053h),a	;11
+
+;loop for the 'on'
+nop		;4
+nop		;4
+inc e		;4
+dec d		;4
+jp nz,$-4	;10, total 26 per loop
+
+;36 cycles before second loop
+
+ld d,17		;7
+ld a,080h	;7
+out (051h),a	;11
+out (053h),a	;11
+
+;loop for the 'off'
+nop		;4
+inc e		;4
+ld a,e		;4
+cp d		;4
+jp nz,$-4	;10, total 26 per loop
+
+;total for macro is 38+36+17*26=516 cycles.
+
+endm
+
+
+;play the loaded sample
+playsam:
+;some dodgy timing ahead, so ints off...
+di
+
+;hack in nmi button as abort
+ld hl,exit
+ld (067h),hl
+ld a,0c3h
+ld (066h),a
+
+;put zero in low byte (which doesn't change)
+xor a
+out (050h),a
+out (052h),a
+
+ld hl,samaddr
+samlenop: ld bc,0  ;modified
+
+loop:
+;this does one byte (2 samples) per loop.
+;
+;We want each sample to take 4606000/8000=575.75 cycles
+;for 8kHz playback. Not many instructions take 0.75 cycles. :-)
+;So instead, do 575 cycles for 8010Hz. (While 576 gets closer to 8kHz,
+;sharp tends to sound better than flat.)
+;
+;Now, enjoy probably the world's first known example of using rld
+;actually being *faster* than doing something else instead...
+
+ld a,0		;7 (just to waste cycles)
+xor a		;4
+rld		;18
+pwma		;516, total 545 - with 30 from loop end below, 575
+
+defs 7		;28 (7x nop)
+scf		;4
+ret nc		;5 (will never ret)
+xor a		;4
+rld		;18
+pwma		;516, total 575
+
+inc hl		;6
+dec bc		;6
+ld a,b		;4
+or c		;4
+jp nz,loop	;10, total 30
+
+;falls through
+
+exit:
+;turn off sound
+ld a,080h
+out (051h),a
+out (053h),a
+
+;restore usual NMI
+ld a,0f7h
+ld (066h),a
+
+ei
+rst 0
+
+
+;samaddr must be at a multiple of 256 bytes for the file size check to
+;work properly. This isn't ideal, but does the job.
+;
+;...well, at the time of writing this is at exactly 0200h anyway, so
+;it's not much of a job. :-)
+
+defs 0200h-$
+
+
+;sample is loaded here; must be last thing in program.
+samaddr:

@@ -1,0 +1,19 @@
+See ../utils/LICENCE for licence details, which also apply here.
+
+Zcnpaint is a paint program. You need a Microsoft-compatible serial
+mouse (plugged into the 9-pin serial port) to use it. The last time I
+used it was with a Logitech Pilot Trackball, for example.
+
+(It also works with nc100em's co-operative mouse support, but note
+that only the GTK2 version of nc100em supports that at the time of
+writing.)
+
+The NC200 is not supported.
+
+Zcnpaint is documented in doc/zcn.txt. Look in the "ZCN external
+commands" section under "ZCNPAINT".
+
+This directory contains source only; the binary is in the 'bin/extra'
+directory.
+
+-Rus.

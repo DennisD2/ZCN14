@@ -1,0 +1,508 @@
+; vt100.z - handle vt100 emulation in QTERM
+
+.incl	"c:vars"
+
+.var	decom	0x20
+.var	ascrl	0x40
+
+.extern	initv
+initv:
+	ld	hl,inits
+	ld	de,inits + 1
+	ld	bc,{inite - inits}
+	ld	(hl),b
+	ldir
+jp23:	ld	hl,23 << 8
+	jr	dochk
+chkxy:	ld	hl,(x)
+dochk:	ld	a,l
+	ld	e,79
+	call	chk1
+	ld	l,a
+	ld	a,h
+	ld	e,23
+	call	chk1
+	ld	h,a
+	ld	a,(flags)
+	and	decom
+	jr	z,savmov
+	ld	de,(hi)
+	ld	a,h
+	cp	e
+	jr	nc,aok1
+	ld	h,e
+aok1:	ld	a,d
+	cp	h
+	jr	nc,savmov
+	ld	h,d
+savmov:	ld	(x),hl
+lodmov:	ld	hl,(x)
+	jp	moveto
+
+.extern	opchar
+opchar:	ld	c,a		; save char in c
+	ld	a,(mode)
+	and	op_bit
+	ret	nz		; exit if not doing output
+	ld	a,(wflg)	; split window mode?
+	or	a
+	jp	nz,winrec	; yes - hand to receive portion
+	ld	a,(vflg)	; vt100 emulation on?
+	or	a
+	jp	z,scrout	; no- send to screen
+				; otherwise give char to vt100 processor
+
+.extern	vt100
+vt100:
+	ld	a,c
+	cp	'\b'
+	ld	hl,x
+	jr	nz,nobs
+	ld	a,(hl)
+	dec	a
+	ret	m
+savho:	ld	(hl),a
+jpsco:	jp	scrout
+nobs:	xor	'\r'
+	jr	z,savho
+	cp	'\t' ^ '\r'
+	jr	nz,notab
+	ld	a,(hl)
+	and	~7
+	add	a,8
+	cp	80
+	ret	z
+	ld	(hl),a
+	jr	lodmov
+notab:	cp	'\n' ^ '\r'
+	jr	nz,nonl
+	inc	hl
+	ld	a,(lo)
+	or	a
+	jr	nz,islo
+	ld	a,23
+islo:	cp	(hl)
+	jp	z,scrlvt
+	ld	a,(hl)
+	cp	23
+	jr	z,lodmov
+	inc	(hl)
+lodmv1:	jr	lodmov
+nonl:	cp	'\7' ^ '\r'
+	jr	z,jpsco
+	ld	hl,nk
+	ld	a,(hl)
+	or	a
+	jr	z,nokil
+	dec	(hl)
+	ret
+nokil:	ld	a,(state)
+	or	a
+	jr	nz,stt1
+	ld	a,c
+	cp	'\e'
+	jr	nz,noesc
+	xor	a
+	ld	(fbits),a
+	ld	(setv),a
+	inc	a
+savstt:	ld	(state),a
+	ret
+noesc:	cp	' '
+	ret	c		; all other control chars are tossed
+	cp	0x7f		; delete?
+	ret	z		; yes - we throw it away
+	jr	c,okasc		; less than delete => not a grafix char
+	ld	c,'+'		; assume all are '+'s
+	ld	hl,vtxtbl	; except special ones in the table
+.dseg
+vtxtbl:	db	205,'='
+	db	186,'|'
+	db	196,'-'
+	db	179,'|'
+	db	0
+.cseg
+xtblp:	ld	e,(hl)		; get char to match
+	dec	e
+	inc	e		; is it zero?
+	jr	z,okasc		; yes, all done so exit
+	inc	hl
+	ld	d,(hl)		; get ascii char to use
+	inc	hl
+	cp	e		; did we hit it?
+	jr	nz,xtblp	; nope, back to try again
+	ld	c,d		; else save character from d
+okasc:	ld	hl,x
+	ld	a,(hl)
+	cp	79
+	jr	nc,xge79
+	inc	(hl)
+	jr	jpsco
+xge79:	inc	hl
+	ld	a,(hl)
+	cp	23
+	jr	nz,yne23
+	ld	a,(lo)
+	or	a
+	jr	z,cka
+	cp	23
+	ret	nz
+cka:	ld	a,(flags)
+	and	ascrl
+	ret	z
+	push	bc
+	call	scrlvt
+	ld	hl,[22 << 8] + 79
+	call	moveto
+	pop	bc
+	call	scrout
+	jp	jp23
+yne23:	call	scrout
+	ld	a,(flags)
+	and	ascrl
+	jr	z,lodmv1
+	ld	hl,y
+	ld	a,(lo)
+	or	a
+	jr	z,nolo
+	cp	(hl)
+	jr	nz,nolo
+	push	hl
+	call	scrlvt
+	pop	hl
+	dec	(hl)
+nolo:	inc	(hl)
+	dec	hl
+	ld	(hl),0
+	jr	lodmv2
+stt1:	dec	a
+	jr	nz,stt2
+	ld	a,c
+	cp	'['
+	ld	a,2
+	jr	z,savstt
+	xor	a
+	ld	(state),a
+	ld	a,c
+	cp	'#'
+	jr	z,k1
+	cp	'('
+	jr	z,k1
+	cp	')'
+	jr	nz,tryM
+k1:	ld	hl,nk
+	inc	(hl)
+	ret
+tryM:	ld	hl,y
+	cp	'M'
+	jr	nz,tryE
+	ld	a,(hi)
+	cp	(hl)
+	jr	nz,nohi
+	call	revsvt
+	jr	lodmv2
+nohi:	dec	(hl)
+	jp	p,lodmov
+	inc	(hl)
+	jr	lodmv2
+tryE:	xor	'E'
+	jr	nz,tryD
+	dec	hl
+	ld	(hl),a
+	inc	hl
+	jr	doD
+tryD:	dec	a
+	jr	nz,try7
+doD:	ld	a,(lo)
+	or	a
+	jr	z,look
+	ld	a,23
+look:	cp	(hl)
+	jr	nz,nolo1
+	call	scrlvt
+	jr	lodmv2
+nolo1:	ld	a,(hl)
+	cp	23
+	jr	nc,lodmv2
+	inc	(hl)
+lodmv2:	jp	lodmov
+try7:	cp	['7' ^ 'E'] - 1
+	jr	nz,try8
+	ld	hl,(x)
+	ld	(sx),hl
+	ld	a,(mm)
+	ld	(sm),a
+	ret
+try8:	cp	['8' ^ 'E'] - 1
+	ret	nz
+	ld	hl,(sx)
+	ld	(x),hl
+	ld	a,(sm)
+	call	setdb
+	jp	chkxy
+stt2:	dec	a
+	jr	nz,stt3
+	ld	hl,p1
+	ld	(pp),hl
+	ld	hl,0
+	ld	(p1),hl
+	ld	a,3
+	ld	(state),a
+	ld	a,c
+	cp	'?'
+	jr	nz,stt3
+	ld	(setv),a
+	ret
+cs2:	call	clear
+lodmv3:	jr	lodmv2
+vclrs:	ld	a,(de)
+	or	a
+	jp	z,cleos
+	dec	a
+	jr	nz,cs2
+	push	hl
+	ld	hl,0
+	call	moveto
+	pop	bc
+	push	bc
+	ld	a,b
+	or	a
+	jr	z,nolin
+cslp:	push	bc
+	call	cleol
+	ld	c,'\n'
+	call	scrout
+	pop	bc
+	djnz	cslp
+nolin:	ld	b,c
+	inc	b
+	ld	c,' '
+cllp:	push	bc
+	call	scrout
+	pop	bc
+	djnz	cllp
+	ld	c,'\b'
+	jp	scrout
+cl2:	ld	c,'\r'
+	call	scrout
+	call	cleol
+	jr	lodmv3
+vclrl:	ld	a,(de)
+	or	a
+	jp	z,cleol
+	dec	a
+	jr	nz,cl2
+	ld	c,'\r'
+	push	hl
+	call	scrout
+	pop	bc
+	jr	nolin
+stt3:	ld	a,c
+	cp	';'
+	jr	nz,nosc
+	ld	a,(setv)
+	or	a
+	jr	z,nosv
+dofbit:	ld	hl,p1
+	ld	a,(hl)
+	or	a
+	ret	z
+	ld	b,a
+	xor	a
+	ld	(hl),a
+	scf
+fblp:	adc	a,a
+	djnz	fblp
+	dec	hl
+	or	(hl)
+	ld	(hl),a
+	ret
+nosv:	ld	hl,(pp)
+	ld	de,p1
+	sbc	hl,de
+	jr	nz,setp3
+	add	hl,de
+	inc	hl
+savpp:	ld	(pp),hl
+	ret
+setp3:	ld	hl,p3
+	ld	(hl),0
+	jr	savpp
+nosc:	sub	'0'
+	cp	10
+	jr	nc,notdig
+	ld	hl,(pp)
+	ld	e,a
+	ld	a,(hl)
+	add	a,a
+	add	a,a
+	add	a,(hl)
+	add	a,a
+	add	a,e
+	ld	(hl),a
+	ret
+notdig:	ld	hl,state
+	ld	(hl),0
+	ld	hl,swtab - 1
+.dseg
+.macro	table	byte,word
+	dw	word
+	db	byte - '0'
+.endm
+swtab:
+	table	'A',vup
+	table	'B',vdown
+	table	'C',vright
+	table	'D',vleft
+	table	'H',vmove
+	table	'f',vmove
+	table	'J',vclrs
+	table	'K',vclrl
+	table	'r',vmarg
+	table	'm',vmode
+	table	'h',vsm
+	table	'l',vrm
+endtab:
+.cseg
+	ld	b,{endtab - swtab} / 3
+switch:	inc	hl
+	ld	e,(hl)
+	inc	hl
+	ld	d,(hl)
+	inc	hl
+	cp	(hl)
+	jr	z,hitit
+	djnz	switch
+	ret
+hitit:	push	de
+	ld	hl,(x)
+	ld	de,p1
+	ret
+vup:	call	defp1
+	neg
+	jr	addy
+vdown:	call	defp1
+addy:	add	a,h
+	ld	h,a
+dochk1:	jp	dochk
+vleft:	call	defp1
+	neg
+	jr	addx
+vright:	call	defp1
+addx:	add	a,l
+	ld	l,a
+	jr	dochk1
+vmove:	call	defp1
+	ld	h,a
+	ld	a,(flags)
+	and	decom
+	jr	z,hok
+	ld	a,(hi)
+	add	a,h
+	ld	h,a
+hok:	inc	de
+	call	defp1
+	ld	l,a
+	dec	h
+	dec	l
+	jr	dochk1
+vmarg:	call	defp1
+	ld	c,a
+	inc	de
+	ld	a,(de)
+	or	a
+	jr	nz,look1
+	ld	a,24
+look1:	ld	b,a
+	ld	hl,[24 << 8] + 1
+	sbc	hl,bc
+	jr	nz,chkbc
+	ld	b,c
+	jr	setbc
+chkbc:	ld	a,c
+	cp	b
+	ret	nc
+setbc:	dec	b
+	dec	c
+	ld	(hi),bc
+	ld	hl,0
+	jr	dochk1
+vmode:	ld	hl,(pp)
+	ld	a,(hl)
+setdb:	ld	(mm),a
+	or	a
+	jp	nz,dim
+	jp	bright
+vsm:	call	dofbit
+	ld	a,(fbits)
+	ld	hl,flags
+	or	(hl)
+	ld	(hl),a
+	ret
+vrm:	call	dofbit
+	ld	a,(fbits)
+	cpl
+	ld	hl,flags
+	and	(hl)
+	ld	(hl),a
+	ret
+
+chk1:	or	a
+	jp	p,chkp
+	xor	a
+	ret
+chkp:	cp	e
+	ret	c
+	ld	a,e
+	ret
+
+defp1:	ld	a,(de)
+	or	a
+	ret	nz
+	inc	a
+	ret
+
+scrlvt:	ld	hl,(hi)
+	ld	a,l
+	cp	h
+	ld	l,23
+	jr	nz,jproll
+	ld	h,l
+jproll:	jp	rollit
+
+revsvt:	ld	a,(lo)
+	or	a
+	jr	z,norevd
+	cp	23
+	jr	z,norevd
+	ld	h,a
+	ld	l,0
+	call	moveto
+	call	dellin
+norevd:	ld	hl,(hi - 1)
+	ld	l,0
+	call	moveto
+	jp	inslin
+
+.useg
+inits:
+state:	ds	1
+hi:	ds	1
+lo:	ds	1
+flags:	ds	1
+sx:	ds	1
+sy:	ds	1
+mm:	ds	1
+sm:	ds	1
+nk:	ds	1
+inite:
+x:	ds	1
+y:	ds	1
+
+setv:	ds	1
+fbits:	ds	1
+p1:	ds	1
+p2:	ds	1
+p3:	ds	1
+pp:	ds	2
+

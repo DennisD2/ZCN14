@@ -1,0 +1,85 @@
+# I'm not sure if it's documented anywhere, but cpmtools will give
+# priority to a diskdefs file in the current directory. This is
+# an "interesting" decision, but actually handy in this situation.
+#
+# To use these entries in your own diskdefs file, you could e.g. just
+# cat this file onto the end of your existing file using something
+# along the lines of "cat this_file >>your_installed_diskdefs_file".
+
+# That said, you should not use this first entry, which is a one-off
+# used while building nc200fd.raw.
+diskdef zcn-build-only-ramd
+  seclen 1024
+  tracks 48
+  sectrk 1
+  blocksize 1024
+  maxdir 64
+  skew 0
+  boottrk 1
+  os 2.2
+  offset 256KB
+end
+
+# The normal entries are below.
+
+# This is suitable for any A: drive on a card image formatted with ZCN
+# >=1.4. (For ZCN <=1.3, this works on a bootable A: drive only.)
+diskdef zcna
+  seclen 1024
+  tracks 256
+  sectrk 1
+  blocksize 1024
+  maxdir 64
+  skew 0
+  boottrk 13
+  os 2.2
+end
+
+# Normally only suitable for non-bootable A: drives formatted by ZCN
+# <=1.3. (However, imgbuild.mk makes sneaky use of it too.)
+diskdef zcna_nonboot
+  seclen 1024
+  tracks 256
+  sectrk 1
+  blocksize 1024
+  maxdir 64
+  skew 0
+  boottrk 1
+  os 2.2
+end
+
+diskdef zcnb
+  seclen 1024
+  tracks 256
+  sectrk 1
+  blocksize 1024
+  maxdir 64
+  skew 0
+  boottrk 1
+  os 2.2
+  offset 256KB
+end
+
+diskdef zcnc
+  seclen 1024
+  tracks 256
+  sectrk 1
+  blocksize 1024
+  maxdir 64
+  skew 0
+  boottrk 1
+  os 2.2
+  offset 512KB
+end
+
+diskdef zcnd
+  seclen 1024
+  tracks 256
+  sectrk 1
+  blocksize 1024
+  maxdir 64
+  skew 0
+  boottrk 1
+  os 2.2
+  offset 768KB
+end

@@ -1,0 +1,197 @@
+;rand - simple random number generator
+;requires maths.z
+
+;for cpm zmac:
+;ZZglobal seed
+;ZZglobal srand
+;ZZglobal rand16
+;ZZglobal rand
+
+;uses these:
+;ZZglobal divide
+
+
+seeda		equ seed
+seedb		equ seed+2
+randc		equ seed+4
+
+;some very random numbers :-)
+seed:		defw 31415,9265,3589	;RNG state
+
+srandtb:	defw 0,0,0		;used to read time on ZCN
+
+
+
+;Converted version of sfc_v3_16 RNG algorithm from PractRand.
+;Original C++ version public domain by Chris Doty-Humphrey.
+;
+;While the v3 version is no longer recommended by the author, it seems
+;to do very well for general use despite that, and is arguably a
+;better fit for the Z80 than the current version (at the time of
+;writing) - just maybe don't go using it for your Z80 cryptography
+;project. :-)
+;
+;rand16 - get random number between 0 and 65535 inclusive
+;entry: none
+;exit:	HL=random number
+;AF/BC/DE corrupt
+rand16:
+;"Uint16 tmp = a + b + counter++;"
+;(actually implemented below as ++counter, as it's easier and makes no
+;practical difference)
+ld hl,(randc)
+inc hl
+ld (randc),hl
+ld de,(seedb)
+ld bc,(seeda)
+add hl,de
+add hl,bc
+push hl		;save "tmp"
+
+;"a = b ^ (b >> 2);"
+;DE is still (seedb) = "b"
+;"a" is built using HA pairing, with result going via HL
+ld h,d
+ld a,e
+srl h
+rra
+srl h
+rra
+xor e
+ld l,a
+ld a,h
+xor d
+ld h,a
+ld (seeda),hl
+   
+;"b = ((b << 5) | (b >> 11)) + tmp;" (effectively)
+;first the "b"<<5
+;DE is still (seedb) = "b"
+;save a copy of high byte in A
+ld a,d
+;"b"<<5 via HL
+ex de,hl
+add hl,hl
+add hl,hl
+add hl,hl
+add hl,hl
+add hl,hl
+
+;now the "b">>11
+;first eight bits are done by just ignoring the low byte
+;high byte of (seedb) = "b" is still in A
+;rrca wraps, but...
+rrca
+rrca
+rrca
+;...A gets limited to the low 5 bits here
+and 31
+
+;HL|=A
+or l
+ld l,a
+
+;add on "tmp" and finally put in (seedb)
+pop de
+add hl,de
+ld (seedb),hl
+
+;HL="tmp" from earlier (returned result)
+ex de,hl
+ret
+
+
+;srand - modify random number seed from R, and on ZCN, also RTC time.
+;Also runs the RNG routine a few times to perturb the state.
+;You should call this once only, before ever calling rand16 or rand.
+;
+;NB: On non-ZCN systems, this only provides 128 different possible
+;sequences if that - modify the six bytes at seed *before* calling
+;this to improve that.
+;
+;entry: none, exit: none
+;AF/BC/DE/HL corrupt
+srand:
+ld hl,seed
+ld b,6
+srandlp1:
+ld a,r
+xor (hl)
+ld (hl),a
+inc hl
+djnz srandlp1
+
+;test for ZCN
+ld a,(066h)
+cp 0f7h
+jr nz,srand1
+
+;better ZCN check
+ld c,128
+call 5
+inc a
+jr z,srand1
+
+;xor in HMS from time. The time is only read once because getting the
+;time exactly right doesn't matter here.
+ld c,085h
+ld de,srandtb
+call 5
+
+ld hl,seed
+ld de,srandtb+3		;skip DMY
+ld b,3
+srandlp2:
+;xor against both bytes of a state word. Not ideal, and also not ideal
+;that the bytes are BCD. But better than nothing I suppose.
+ld a,(de)
+xor (hl)
+ld (hl),a
+inc hl
+ld a,(de)
+xor (hl)
+ld (hl),a
+inc hl
+inc de
+djnz srandlp2
+
+srand1:
+;perturb things a bit
+ld b,10
+srandlp3:
+push bc
+call rand16
+pop bc
+djnz srandlp3
+ret
+
+
+;get random number in range 0 to HL-1 inclusive
+;entry:	HL=range size
+;exit:	HL=random number in range 0 to range_size-1
+;AF/BC/DE corrupt
+;this is equivalent to 'rand()%range_size' in C; the Linux 'rand'
+;man page suggests this alternative if you need a better distribution,
+;which may be a good idea for numbers bigger than a few thousand:
+;
+; >        To  ensure  a  good distribution for a subrange of values,
+; >        use code like the below:
+; >             i = RAND_MAX / my_range
+; >             i *= my_range
+; >             while ((j = rand()) >= i) continue;
+; >             return j % i;
+; >        (code example based on code from Karl Lehenbauer's fortune
+; >        cookie  program,  which  credits  Ken Arnold, Unix Review,
+; >        October 1987).
+;
+;replace rand() above with a call to rand16, and RAND_MAX with FFFFh.
+;there are multiply/divide/mod routines in maths.z. Note that using the
+;above algorithm will be significantly slower than calling this
+;routine, probably half the speed at best.
+rand:
+push hl
+call rand16
+pop de
+call divide
+ex de,hl
+ret

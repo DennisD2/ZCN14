@@ -1,0 +1,15 @@
+NAME
+	dclock - a simple clock program
+
+SYNOPSIS
+	dclock
+
+DESCRIPTION
+	A clock program. Exit with Esc.
+
+BUGS
+	The auto-poweroff timeout is effectively disabled by the
+	constant updating. Be careful if using batteries.
+
+SEE ALSO
+	time, timeset

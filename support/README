@@ -1,0 +1,317 @@
+* README for `support' directory	-*- outline -*-
+
+The files in and below this directory are intended to help support
+your use of ZCN, or at least that's the justification for the
+directory's name. :-) None of the programs were written by me (unless
+you count md5cpm), but they are all freely usable and distributable as
+far as I can tell, as indicated below.
+
+I've found all of these programs useful and/or interesting, and
+they're probably worth trying out.
+
+See ../doc/zcn.txt's "CP/M-related archives" section, for where you
+might be able to find certain old archives (like Oakland) referred to
+below.
+
+-Rus.
+
+PS. I know "public domain" isn't really a licence, but it does fill
+that gap here - specifically, the one between "(Licence:" and ")". :-)
+
+
+* The subdirectories are (in alphabetical order):
+
+** bs
+(Licence: BSD 2-clause)
+(Original version available from http://www.catb.org/~esr/bs/ (though
+I actually ported the old version 2.1) - the two versions here are
+modified to compile with Hitech C and run on CP/M, and the bs.com
+executable is patched to run in pseudo-80x24 in ZCN on the
+NC100/NC150)
+
+A port of a curses-based game for Unix (see the `rogue' section for
+details of how it was ported). This one is a version of Battleships
+played on a 10x10 grid, with you playing against the computer. There's
+a reasonable amount of onscreen help, so you should be able to figure
+out how to work it pretty quickly.
+
+NB: bs.com is for NC100/NC150, bs200.com is for NC200.
+
+
+** chess
+(Licence: seemingly public domain)
+(Originally from Oakland's /pub/cpmug/cpmug041.ark)
+
+A chess program apparently from 1978 or perhaps even earlier, written
+in Fortran. I doubt it'll offer much of a challenge to any competent
+player, since even I can sometimes beat it. :-) I hacked it to redraw
+the board before prompting you for a move (unfortunately this means
+you get it if you make an invalid move etc., and (except on NC200) the
+computer's move scrolls off the screen soon after it makes the move),
+and also made it take moves in lowercase, though to castle you still
+must use `O-O' and `O-OO' and to propose a draw you must use `DRAW'.
+To quit a game prematurely, use ^C. The original (unhacked) program is
+`chess.org', the hacked one is `chess.com'.
+
+
+** fish
+(Licence: BSD 3-clause)
+(Originally from
+https://www.ibiblio.org/pub/Linux/games/bsd-games-2.17.tar.gz (the
+version I ported was actually 2.12), though this version was modified
+to compile with Hitech C and run on CP/M, and to match the 1999 UCB
+move to 3-clause)
+
+[from `fishhelp.txt']
+"This is the traditional children's card game "Go Fish".  We each get seven
+cards, and the rest of the deck is kept to be drawn from later.  The
+object of the game is to collect "books", or all of the cards of a single
+value.  For example, getting four 2's would give you a "book of 2's"."
+
+Although I've tried to make this version well-suited to ZCN - not so
+many line breaks, for example - it should work equally well on any
+other Z80-based CP/M box.
+
+There's also a version for BDS C included as source only (fish-bds.c),
+so you can enjoy compiling a BSD game with a BDS compiler. :-)
+
+
+** md5cpm
+(Licence: public domain)
+
+Computes an MD5 message digest compatible with other implementations,
+such as "md5sum" from GNU coreutils. The output can be used as
+essentially a fancy checksum for files, but with a much lower risk of
+failing to detect a corrupted file than with a simple checksum or CRC.
+
+This one is partly by me, at least in the sense that I did the
+minimal md5sum-like wrapper around Solar Designer's MD5 code, and
+convinced Hitech C to actually compile it and work.
+
+
+** pipe
+(Licence: public domain)
+(Originally from Oakland's /pub/cpm/sysutl/1kutils3.lbr, which
+contains a couple of other little utils too. A more recent version of
+pipe is available, but it doesn't add anything much.)
+
+Pipe copies files from one drive/file to another. This is a must as
+there's no internal (or external, for that matter) ZCN command to do
+this. (And the reason for that, of course, is that I use pipe. :-))
+
+
+** qterm
+
+See the mention of qterm.com below for details.
+
+
+** rogue
+(Licence: seemingly freely redistributable; I added BSD documentation)
+(Original version from Oakland's /pub/cpm/games/rogue17.pma, though
+the executable is patched to run in pseudo-80x24 on ZCN)
+
+This is a very good port of BSD rogue, by David Goodenough (the author
+of QTERM). Rogue, in case you don't know, is essentially an AD&D-style
+game where you fight your way through many levels of dungeons,
+upgrading your armour, weapons etc. as you go, to find a magical
+amulet. Anyway, it's not a bad little game. You should certainly read
+the instructions before playing though, as it can take a bit of
+getting used to.
+
+Since rogue insists on an 80x24 screen, it required a fair bit of
+hacking to get running under ZCN. I adapted part of a generic 80x24
+screen emulator for ZCN that I'd been working on (but never finished),
+fairly successfully. You get the top 12 lines squashed up on the
+left-hand side of the screen, and the bottom 12 on the right-hand
+side. It sounds messy and confusing - and it is. But it's reasonably
+fast and works quite well... for rogue, at least. :-)
+
+(It's easier to play on the NC200, where the text just gets squashed
+together a bit to give the 24 lines. But in this case, you do need to
+press a key for a screen redraw if you turn the NC off and on again.)
+
+You may have difficulty seeing where you are, to begin with. This is
+because the block cursor is inverting the `@' character that
+represents you, and potentially only a few pixels are still showing!
+If you move about a bit, you should get a better feel for where you
+are.
+
+There's also a VT100 version which you can run on any CP/M (including
+ZCN if you use a VT100 or VT100 terminal emulator as a serial
+console), called roguevt.com. The original rogue.com is here as
+rogue.org, and if you wanted to, it could be patched for other
+terminal types according to the instructions in qterm.pat.
+
+I've included the source to my changes to rogue to make it work under
+ZCN, as roguehak.z.
+
+
+** samples
+(Licence: public domain)
+(Originally from https://freepd.com/ - excerpts converted with
+ffmpeg, sox, and mk4bit)
+
+These are (very) short 4-bit samples of a few public domain tracks by
+Kevin MacLeod. They can be played with play4b, which you can find in
+../bin/extra.
+
+Some more details - the Arpent sample is from 0:56 for 9 seconds in
+the original, the other two are from the start for 11 seconds. Each
+one was converted like this (in Linux):
+
+  ffmpeg -ss start -i in.mp3 -y -t length tmp.wav
+  sox -D tmp.wav -r 8000 -c 1 -t ub - |mk4bit >out.4b
+
+C source for mk4bit is in ../utils.
+
+
+** ted
+(Licence: GPL)
+(Originally from https://github.com/hperaza/TED )
+
+The TED text editor, as slightly modified to use ZCN control codes and
+screen sizes, in NC100/NC150, NC200, and VT100-friendly versions. See
+ted/README for details - but essentially, you want ted.com for
+NC100/150, ted200.com for NC200, and tedvt.com for a VT100 serial
+console.
+
+The editor is quite capable if slightly eccentric, and the best place
+to start is probably the man page and/or the ted/docs dir. (The man
+page I wrote has a few examples of how to tackle the basics.) There
+are pros and cons as compared with other editors - it can edit files
+larger than memory (using a clever sparse-file virtual memory scheme),
+but it lacks word wrap, and moving blocks of text requires using a
+command mode.
+
+Note that files edited with TED must be pure ASCII, any high bits will
+simply be stripped off and lost.
+
+
+** wade
+(Licence: public domain)
+(Originally from Oakland's /pub/cpm/debug/wade.lbr and
+/pub/cpm/debug/wadesrc.lbr)
+
+Wade is a Z80 debugger, supporting disassembly, breakpoints, tracing,
+generally all you'd expect. Wade is also quite handy for patching
+programs. I removed all but the CP/M 2.2 version here (renamed from
+wade2.com to wade.com), which is what you should use under ZCN. You
+don't really need the source or the Wordstar-format version of the
+documentation, they're just included for reference.
+
+
+** zx0alt
+
+To quote the README there:
+
+"The files in this directory are duplicates of those under the rest of
+the `support' directory generally, but using ZX0 format compression.
+They have not been thoroughly tested, but all should be fine to use.
+
+The advantage of using these is, obviously, the file size. Everything
+here is smaller than the original - as I tried most of them, then
+removed any which wouldn't be smaller on a ZCN drive."
+
+
+* The files are:
+
+** lar.c, lar.com, lar-post.txt
+(Licence: public domain)
+(Originally from net.sources in 1983 - see lar-post.txt. lar.c here is
+a modified version that compiles with Hitech C.)
+
+[If you want to extract LBR files on Unix/Linux, you may prefer to try
+my rather more advanced `lbrate', which also takes care of
+decompressing files - see https://www.svgalib.org/rus/lbrate.html .]
+
+A public domain .LBR archive packer/unpacker/etc. in C, slightly
+modified to compile under Hitech C if `CPM' is defined. (NB: If you
+want to compile it on Unix/Linux, try ../man/laransi.c instead.) The
+resulting lar.com runs ok under ZCN, but of course there's no globbing
+so wildcards are a problem. It's fine for listing and extracting .LBR
+files though, and this is probably all you should be doing with them
+anyway. :-) Do `lar t foo.lbr' to find out what's in a .LBR, `lar e
+foo.lbr' to extract all the files in it, and plain `lar' for usage
+help.
+
+Note that often files in .LBRs will be compressed - you can spot these
+easily as they have either a Q, a Z or a Y in the second letter of the
+extension, e.g. `pipe17.dzc'. A tool which can uncompress the Z and Y
+types is `ucrlzh', available as Oakland's /pub/cpm/squsq/crlzh20.lbr.
+One for handling the older Q type is usq120.com in the same directory.
+
+
+** nciospec.doc
+(Licence: seemingly freely redistributable)
+
+nciospec.doc is as emailed to me by Cliff Lawson in 1994, or to quote
+him at the time:
+
+"there is a file called NCIOSPEC.ZIP in the Amstrad library in the
+UKCOMP section of Compuserve that I wrote. I have a feeling I have
+also uploaded this to the amstrad/files section on CIX."
+
+"As for the NC stuff - find it attached to this message - feel free to
+up load it to any ftp sites you think might be relevant."
+
+So there you go. If for some inexplicable reason you can't get it from
+CompuServe or CIX any more, you can make do with the copy here. :-)
+
+This old version differs slightly from the nciospec.txt copy that he
+put up on his website, though that version just added a basic
+description of the Ranger disk routine "diskservice" which seems to
+(also?) exist on the NC200.
+
+
+** qterm.com, qterm.uue, qt-zcn.z
+(Licence: seemingly freely redistributable)
+(Originally from Oakland's /pub/cpm/qterm/qterm43e.lbr and
+/pub/cpm/qterm/qt43src.lbr - qterm.com is patched to v4.3f as
+/pub/cpm/qterm/qt43efx2.ark suggests)
+
+`qterm.com' is a pre-patched copy of QTERM v4.3f. `qterm.uue' is a
+uuencoded copy, for sending to your NC after booting for the first
+time, as described in `zcn.txt'. `qt-zcn.z' is the ZCN patch file.
+
+The `qterm' directory contains an unmodified copy of the contents of
+qterm43e.lbr and qt43src.lbr, except that qterm.com has been renamed
+to qterm43e.com to keep it more clearly distinct from the patched
+version (and -readme.1st renamed for convenience on Unix/Linux).
+
+
+** ws4patch
+(Licence: presumably freely redistributable)
+
+An `auto-patch' file for Wordstar 4, which sets it up for use with
+ZCN. See ../doc/zcn.txt for how to use this.
+
+
+** zcn.vde and zcn200.vde
+(Licence: presumably freely redistributable)
+
+These are installation files for VDE, a text editor (zcn200.vde being
+a version for NC200s). VDE is no longer included with ZCN due to the
+restrictive licence and fairly questionable origins - if you follow it
+all the way back, it's ultimately based on an editor VDO that was
+published as a type-in listing in BYTE magazine! - but it's easy
+enough to get hold of online, and you can set it up to use ZCN with
+these files (by doing e.g. "vinst266 vde266.com zcn.vde" then pressing
+S to save).
+
+VDE 2.66 can be found in Oakland's /pub/cpm/vdoedit/vde266.lbr. Note
+also the bugfix described in /pub/cpm/vdoedit/vde266fx.dzc, which can
+be applied to vde266.com using `wade' as follows:
+
+	A>wade vde266.com
+	WADE 1.5 - Wagner 85-04-27  (TurboDos & CP/M 2 Version)
+	Low=0100   High=3D7F   Max=3D7F   Top=87FF
+	
+	:s29b8 cd a7 29
+	:w l h			<-- the middle char is an L, not a one!
+	:g0
+	
+	A>
+
+Of course, if you still have an old copy of VDE which is set up to
+work with ZCN, you can just continue to use that as-is and needn't
+bother with any of the above.

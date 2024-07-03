@@ -1,0 +1,21 @@
+NAME
+	nctest - test NC model
+
+SYNOPSIS
+	nctest
+
+DESCRIPTION
+	Test which model of NC you're using. It also tests for some
+	telltale signs of the NC being emulated.
+
+	Usually of course, it will be obvious to you which model of NC
+	you're using. :-) But the result of nctest is (slightly) more
+	likely to be of interest if you're using an emulator.
+
+	Note that one test will change any clock seconds setting on
+	the NC100/NC150, though it should be able to restore it after.
+
+BUGS
+	You shouldn't turn the NC off while nctest is running, as one
+	test can potentially give an inaccurate result if you do
+	(though in practice this should be very rare).

@@ -1,0 +1,763 @@
+;keyb - set keyboard map
+
+org 0100h
+
+jp start
+
+;from keyread.z - these MUST match the settings there
+
+;--------------------------------------------------------------------
+;'standard' keymappings
+kldel	equ 07fh	;'<-Del' key - used as delete (backspace)
+krdel	equ 7		;'Del->' key - used as ^G (del. char under cursor)
+
+kleft	equ 'S'-040h
+kright	equ 'D'-040h
+kdown	equ 'X'-040h
+kup	equ 'E'-040h
+kmenu	equ '`'		;we use 'menu' as backquote
+;these for internal use only (and keyb)
+;the values of ksymbol,kctrl,kfunc,krshift,klshift,kcapslk are deliberately
+;contiguous and must remain so.
+ksymbol	equ 0c0h
+kctrl	equ 0c1h
+kfunc	equ 0c2h
+krshift	equ 0c3h
+klshift	equ 0c4h
+kcapslk	equ 0c5h
+;additional keymap constants for dead key support, these must be
+;consecutive from kdk1 to kdk4 but do not need to be contiguous with
+;the constants for the shift etc. keys.
+kdk1	equ 0c8h
+kdk2	equ 0c9h
+kdk3	equ 0cah
+kdk4	equ 0cbh
+;the special 'none' marker (must stay this value)
+knone	equ 0ffh
+;--------------------------------------------------------------------
+
+
+musage:
+defb 'usage: keyb <layout>',13,10
+defb 'supported layouts are:',13,10
+defb '  de, dk, fr, it, se, uk, ukdvorak, us$'
+
+mold: defb 'This program requires a newer version of ZCN.$'
+
+merr: defb 'Unknown layout.$'
+
+ptr_keytbl: defw 0	;dest for main keymap in ZCN
+ptr_kshsrc: defw 0	;dest for shift/sym maps in ZCN
+mapsav: defw 0		;used by nc2fix routine
+is_nc200: defb 0	;nz if NC200
+nc2buf	equ 080h	;temp buffer to hold NC200 main keymap
+
+
+start:
+;must be ZCN
+ld a,(066h)
+cp 0f7h
+ret nz
+
+;better ZCN check
+ld c,128
+call 5
+inc a
+ret z
+
+;must support keymap addr returning
+;(requires ZCN >=1.2)
+ld c,145
+call 5
+ld (ptr_keytbl),hl
+ld (ptr_kshsrc),de
+ld de,mold
+ld c,9
+and a
+jp nz,5
+
+;must also have a symbol mapping table, unlike version 1.3
+ld hl,(ptr_kshsrc)
+ld de,22*2+3
+add hl,de
+ld de,mold
+ld c,9
+ld a,(hl)
+cp 1		;1.3 had ld bc,nn instruction here
+jp z,5		;which couldn't be part of a valid mapping
+
+;XXX it would probably make more sense to just test ZCN version :-)
+
+;check for NC200
+ld c,144
+call 5
+cpl
+ld (is_nc200),a
+
+;give usage if no arg
+ld a,(05dh)
+cp 32
+ld de,musage
+ld c,9
+jp z,5
+
+;check arg against table
+ld hl,table
+loop:
+push hl
+ld a,(hl)
+inc hl
+ld h,(hl)
+ld l,a
+or h
+jr z,nomatch
+ld de,05dh
+ld bc,8
+call strncmp
+pop hl
+inc hl
+inc hl
+jr nc,loop
+
+;if we get here it matched.
+dec hl
+ld a,(hl)
+dec hl
+ld l,(hl)
+ld h,a
+ld de,8
+add hl,de
+
+;Any changes made should happen with ints off,
+;to avoid any chance of a half-copied layout being used.
+
+di
+
+;now at NC100 key table.
+ld a,(is_nc200)
+and a
+call z,nc100copy
+call nz,nc200copy
+
+;now at shift-then-symbol mappings
+ld de,(ptr_kshsrc)
+ld bc,44+30+44	;22+22 shift, 15+15 sym, 11*4 dk
+ldir
+
+ei
+
+;the following font data install should only happen on ZCN >=1.2, but
+;the keymap addr return wasn't available before 1.2 anyway, and we
+;checked that already. (Note that the font data is only preserved over
+;poweroff on ZCN >=1.4 though!)
+;
+;So, after any successful keyboard mapping selection, install the extra
+;font data. This is about as easy as it gets, just have to be careful
+;to skip E700h and stop before E7E7h.
+ld hl,extrafont+1
+ld de,extraaddr+1 ;must skip E700h
+ld bc,38*6-1	;last byte written will be E7E3h
+ldir
+
+;Also another three chars, at E7EAh.
+ld hl,extraf2
+ld de,extraa2
+ld bc,3*6
+ldir
+
+;done. If we're running on the console, output an Esc to avoid CR/LF.
+ld c,132	;console in/out assignments
+call 5
+ld a,l
+and a
+ret nz
+
+ld e,27
+ld c,2
+jp 5
+
+
+nomatch:
+ld de,merr
+ld c,9
+call 5
+rst 0		;stuff still on stack
+
+
+
+
+nc100copy:
+push af		;must preserve flags
+ld de,(ptr_keytbl)
+ld bc,80
+ldir		;copy main keymap
+pop af
+ret
+
+nc200copy:
+push hl
+
+;make NC200 version
+call nc2fix
+
+ld hl,nc2buf
+ld de,(ptr_keytbl)
+ld bc,80
+ldir		;copy main keymap
+
+pop hl
+ld de,80
+add hl,de	;skip past NC100 main keymap
+ret
+
+
+;a series of offsets in NC200 and NC100 main keymaps
+;which allow us to construct an NC200 keymap from an NC100
+;one. Each entry is two single-byte offsets, the first in the
+;NC200 table, the second in the NC100 table - the NC100 side is the
+;source, the NC200 side is the destination.
+;
+;Several zero offsets are used on the NC100 side, as the zeroth byte
+;in the NC100 keymap is always knone.
+nc2fixtbl:
+defb 0*8+5, 4*8+7			;'4'
+defb 1*8+0, 9*8+6,	1*8+1, 0	;'9', knone
+defb 2*8+1, 6*8+7,	2*8+3, 1*8+1	;'6', '5'
+;none on line 3
+defb 4*8+6, 7*8+6,	4*8+7, 8*8+7	;'7', '8'
+;none on line 5
+defb 6*8+7, 0				;knone
+defb 7*8+6, 7*8+7,	7*8+7, 0	;'=', knone
+defb 8*8+7, 0				;knone
+defb 9*8+6, 9*8+7,	9*8+7, 0	;'0', knone
+
+nc2flen equ [$-nc2fixtbl]/2
+
+
+nc2fix:
+;generate NC200 main keymap from an NC100 one.
+
+;first copy NC100 one to NC200
+ld (mapsav),hl
+ld de,nc2buf
+ld bc,80
+ldir
+
+;patch as required
+ld hl,nc2fixtbl
+ld b,nc2flen
+ld d,0
+nc2flp:
+ld a,(hl)	;dest ofs
+inc hl
+ld e,(hl)	;src ofs
+inc hl
+push hl
+
+ld hl,(mapsav)
+add hl,de
+ld c,(hl)	;read src byte
+
+ld hl,nc2buf
+ld e,a		;dest ofs still in A
+add hl,de
+ld (hl),c	;write dst byte
+
+pop hl
+djnz nc2flp
+
+ret
+
+
+
+;from zcnlib's string.z
+
+;compare bc bytes at hl and de
+;NB: unlike the C function, this only tests for equality
+;entry:	hl=string1, de=string2, bc=num. to compare
+;exit:	c if they match, nc otherwise
+;af/bc/de/hl corrupt
+strncmp:
+ld a,(de)
+cp (hl)
+jr nz,strncmp2
+inc hl
+inc de
+dec bc
+ld a,b
+or c
+jr nz,strncmp
+;they matched ok
+scf
+ret
+
+strncmp2:
+;they didn't match
+and a	;no carry
+ret
+
+
+
+;this is not the usual font data, this is the page in which we install
+;extra font data for chars 128+. It is vital that E700h and
+;E7E7h/E7E8h/E7E9h are avoided, or interrupt handling will break.
+extraaddr	equ 0e700h
+
+;extra font data stuffed into page E7h as above. This needs ZCN >=1.2.
+;(But for the data to survive poweroff, it needs ZCN >=1.4.)
+;This is data for chars 80h to AAh, but the first byte is actually
+;skipped, to avoid overwriting E700h. E7E7h+ is avoided by simply
+;copying (not counting E700h) 38 chars, i.e. not enough char font data
+;to reach it. :-)
+extrafont:
+defb 0	;first byte is skipped
+defb 0,0,0,0,0
+;font data for chars 129-165, straight from bbcbas.z.
+;(Why did I ever do this *eight* bytes to a line? Bah...)
+defb 0AAh,000h
+defb 0AAh,0AAh,0EEh,000h,022h,044h,0EEh,088h
+defb 066h,000h,044h,066h,0AAh,0AAh,066h,000h
+defb 0AAh,066h,0AAh,0AAh,066h,000h,088h,066h
+defb 0AAh,0AAh,066h,000h,044h,066h,0AAh,0AAh
+defb 066h,000h,000h,066h,088h,066h,022h,044h
+defb 0EEh,044h,0EEh,088h,066h,000h,0AAh,044h
+defb 0EEh,088h,066h,000h,088h,044h,0EEh,088h
+defb 066h,000h,0AAh,000h,044h,044h,044h,000h
+defb 044h,0AAh,044h,044h,044h,000h,088h,000h
+defb 044h,044h,044h,000h,0AAh,044h,0AAh,0EEh
+defb 0AAh,000h,044h,044h,0AAh,0EEh,0AAh,000h
+defb 022h,0EEh,0CCh,088h,0EEh,000h,000h,066h
+defb 0BBh,0AAh,077h,000h,033h,066h,077h,0AAh
+defb 0BBh,000h,044h,044h,0AAh,0AAh,044h,000h
+defb 0AAh,044h,0AAh,0AAh,044h,000h,088h,044h
+defb 0AAh,0AAh,044h,000h,044h,0AAh,0AAh,0AAh
+defb 066h,000h,088h,000h,0AAh,0AAh,066h,000h
+defb 0AAh,000h,0AAh,0EEh,022h,0CCh,0AAh,044h
+defb 0AAh,0AAh,044h,000h,0AAh,000h,0AAh,0AAh
+defb 0EEh,000h,011h,066h,0EEh,0AAh,044h,000h
+defb 022h,055h,0EEh,044h,0FFh,000h,066h,0AAh
+defb 0EEh,0AAh,0CCh,000h,0CCh,0CCh,0BBh,0AAh
+defb 099h,000h,022h,044h,0EEh,044h,044h,088h
+defb 022h,066h,0AAh,0AAh,066h,000h,022h,000h
+defb 044h,044h,044h,000h,022h,044h,0AAh,0AAh
+defb 044h,000h,022h,000h,0AAh,0AAh,066h,000h
+defb 0EEh,000h,0CCh,0AAh,0AAh,000h,0EEh,000h
+defb 0EEh,0AAh,0AAh,000h
+
+;NB: Have to skip char 166.
+
+extraa2		equ 0e7eah
+
+;bitmaps for three more chars, 167-169.
+extraf2:
+defb 033h,044h,0EEh,044h,033h,0	;euro sign (D5h maps to it in term.z)
+;technically 168/169 are unused, but bbcbas uses 169 to print chars
+;>=128. Having data here doesn't affect that though.
+defs 12
+
+
+
+table:
+defw type_de
+defw type_dk
+defw type_fr
+defw type_it
+defw type_se
+defw type_uk
+defw type_ukdvorak
+defw type_us
+defw 0
+
+;a type has following structure:
+;name	8 bytes, all caps, padded to 8 chars w/spaces
+;	(matched against part of FCB)
+;nc1map	the main 80-byte map for NC100
+;shift	shift-mapping tables, 22 bytes src, 22 bytes dst
+;symbol	symbol-mapping tables, 15 bytes src, 15 bytes dst
+;dk	dead-key-mapping tables, 11*4 bytes dst
+;	  (src for this is fixed, implicitly " aeiouAEIOU")
+;
+;All key encoding uses DOS code page 858 (850 plus euro sign) for codes
+;128-255, see e.g.
+;
+;  https://en.wikipedia.org/wiki/Code_page_858
+;
+;(Many of these also match code page 437, which seems to mostly be
+;what the ROM OS uses with some imported codes from 850.)
+;
+;This is complicated by the "internal use only" key codes, as these
+;areas are impossible to use in keymaps for actual generated keys.
+;They were moved to match box-drawing-char areas in ZCN 1.4, to make
+;European keyboard layouts possible - this shouldn't be a problem
+;generally, but it does limit what you could do with any custom
+;layouts for example.
+;
+;Also note that ZCN's text-output functions won't output appropriate
+;characters for 128..255 (unless you count 247 (f7h)) by default. ZCN
+;>=1.4 can output a small range of non-ASCII chars, but only if you
+;ran keyb beforehand, and various ZCN commands etc. will only deal
+;with ASCII input. Non-ASCII chars are probably most usable with
+;bbcbas, but even that isn't 100%.
+;
+;(ZCN-specific programs could support the full range via the
+;set-text-font BDOS function (see zcnprog.txt), perhaps using the
+;high-half font from bbcbas. Since the BDOS resets the text font
+;address on warm boot, it might also be possible to patch existing
+;programs for this, but difficult as you'd need (256-32)*6=1344 bytes
+;for the font data.)
+;
+;NB:
+;
+;- main map is the same for NC100 and NC150
+;- on NC200, main map will be constructed from NC100 one
+;- shift/sym/dk maps are the same for NC100/150/200
+
+
+;DE, German keyboard mapping
+type_de:
+defb 'DE      '
+
+defb knone,knone,knone,13,	kleft,knone,krshift,klshift
+defb knone,'5',knone,knone,	32,27,kctrl,kfunc
+defb knone,knone,knone,knone,	9,'1',ksymbol,kcapslk
+defb 'd','s',knone,'e',		'w','q','2','3'
+defb 'f','r',knone,'a',		'x','y',knone,'4'
+defb 'c','g','z','t',		'v','b',knone,knone
+defb 'n','h','-','#',		kright,krdel,kdown,'6'
+defb 'k','m','u',kmenu,		kup,'<','7',kdk1
+defb ',','j','i',084h,		081h,'+',0e1h,'8'
+defb '.','o','l',094h,		'p',kldel,'9','0'
+
+;shift mapping (22 bytes src, 22 bytes dst)
+;(largely from the 2003 version)
+defb '12345', 			'67890'
+defb 0e1h,kdk1,081h,'+',094h,	084h,'#,.-'
+defb '<`'
+defb '!"',0f5h,'$%', 		'&/()='
+defb '?',kdk2,09ah,'*',099h,	08eh,39,';:_'
+defb '>~'
+
+;symbol mapping (15 bytes src, 15 bytes dst)
+;0               5           10
+;e  2  3   4  6  7 8 9 0 ss  "e q m  + <
+;es ^2 ^n pnd ^  { [ ] } \   ae @ mu ~ |
+;("^n" is ^n in 437, or ^3 in code page 850/858)
+
+defb 'e2346',			'7890',0e1h,	089h,'qm+<'
+defb 0d5h,0fdh,0fch,09ch,'^',	'{[]}\',	091h,'@',0e6h,'~|'
+
+;dead key mapping (src always " aeiouAEIOU", 11*4 bytes dst)
+;  a  e  i  o  u  A  E  I  O  U
+;' 'a 'e 'i 'o 'u 'A 'E 'I 'O 'U
+defb 39	;quote
+defb 0a0h,082h,0a1h,0a2h,0a3h
+defb 0b5h,090h,0d6h,0e0h,0e9h
+;
+;  a  e  i  o  u  A  E  I  O  U
+;` `a `e `i `o `u `A `E `I `O `U
+defb '`'
+defb 085h,08ah,08dh,095h,097h
+defb 0b7h,0d4h,0deh,0e3h,0ebh
+;
+;last two dk unused
+defs 22
+
+
+;DK, Danish keyboard mapping
+type_dk:
+defb 'DK      '
+
+defb knone,knone,knone,13,	kleft,knone,krshift,klshift
+defb knone,'5',knone,knone,	32,27,kctrl,kfunc
+defb knone,knone,knone,knone,	9,'1',ksymbol,kcapslk
+defb 'd','s',knone,'e',		'w','q','2','3'
+defb 'f','r',knone,'a',		'x','z',knone,'4'
+defb 'c','g','y','t',		'v','b',knone,knone
+defb 'n','h','-',39,		kright,krdel,kdown,'6'
+defb 'k','m','u',kmenu,		kup,'<','7',kdk1
+defb ',','j','i',09bh,		086h,kdk3,'+','8'
+defb '.','o','l',091h,		'p',kldel,'9','0'
+
+;shift mapping (22 bytes src, 22 bytes dst)
+;0                     10                            20
+;1 2 3 4 5  6 7 8 9 0  + dk1 ora dk3 ae  /o ' , . -  < `
+;! " # $ %  & / ( ) =  ? dk2 orA ^   AE  /O * ; : _  > ~
+defb '12345',			'67890'
+defb '+',kdk1,086h,kdk3,091h,	09bh,39,',.-'
+defb '<`'
+defb '!"#$%',			'&/()='
+defb '?',kdk2,08fh,'^',092h,	09dh,'*;:_'
+defb '>~'
+
+;symbol mapping (15 bytes src, 15 bytes dst)
+;0            5
+;e  2 3  7 8  9 0 dk1 dk3 <
+;es @ pn { [  ] } |   ~   \
+defb 'e2378', 		'90',kdk1,kdk3,'<'
+defs 5
+defb 0d5h,'@',09ch,'{[',']}|~\'
+defs 5
+
+;dead key mapping (src always " aeiouAEIOU", 11*4 bytes dst)
+;  a  e  i  o  u   A  E  I  O  U
+;' 'a 'e 'i 'o 'u  'A 'E 'I 'O 'U
+defb 39	;quote
+defb 0a0h,082h,0a1h,0a2h,0a3h
+defb 0b5h,090h,0d6h,0e0h,0e9h
+;
+;  a  e  i  o  u  A  E  I  O  U
+;` `a `e `i `o `u `A `E `I `O `U
+defb '`'
+defb 085h,08ah,08dh,095h,097h
+defb 0b7h,0d4h,0deh,0e3h,0ebh
+;
+;  a  e  i  o  u  A  E  I  O  U
+;" "a "e "i "o "u "A "E "I "O "U
+defb '"'
+defb 084h,089h,08bh,094h,081h
+defb 08eh,0d3h,0d8h,099h,09ah	;"E "I are 850/858-only
+;
+;last dk unused
+defs 11
+
+
+;FR, French keyboard mapping
+type_fr:
+defb 'FR      '
+
+defb knone,knone,knone,13,	kleft,knone,krshift,klshift
+defb knone,'(',knone,knone,	32,27,kctrl,kfunc
+defb knone,knone,knone,knone,	9,'&',ksymbol,kcapslk
+defb 'd','s',knone,'e',		'z','a',082h,'"'
+defb 'f','r',knone,'q',		'x','w',knone,39
+defb 'c','g','y','t',		'v','b',knone,knone
+defb 'n','h','!','*',		kright,krdel,kdown,'-'
+defb 'k',',','u',kmenu,		kup,'<',08ah,'='
+defb 59,'j','i',097h,		kdk1,'$',')','_'
+defb ':','o','l','m',		'p',kldel,087h,085h
+
+;shift mapping (22 bytes src, 22 bytes dst)
+;0                          10                             20
+;& 'e " ' (  - `e _ ,c `a   )  = dk^  $  `u  *  , ; :  !   < `
+;1 2  3 4 5  6 7  8 9  0   deg + dk" pnd %   mu ? . / [1]  > ~
+;[1] section sign, U+00A7
+defb '&',082h,'"',39,'(',    '-',08ah,'_',087h,085h
+defb ')=',kdk1,'$',097h,     '*,',59,':!'
+defb '<`'
+defb '12345',                '67890'
+defb 0f8h,'+',kdk2,09ch,'%', 0e6h,'?./',0f5h
+defb '>~'
+
+;symbol mapping (15 bytes src, 15 bytes dst)
+;0                          10
+;e  'e " ' (  - `e _ ,c `a  ) =
+;es ~  # { [  | `  \ ^  @   ] }
+defb 'e',082h,'"',39,'(',    '-',08ah,'_',087h,085h,	')=',0,0,0
+defb 0d5h,'~#{[',            '|`\^@',			']}',0,0,0
+
+;dead key mapping (src always " aeiouAEIOU", 11*4 bytes dst)
+;  a  e  i  o  u  A  E  I  O  U
+;^ ^a ^e ^i ^o ^u ^A ^E ^I ^O ^U
+defb '^'
+defb 083h,088h,08ch,093h,096h
+defb 0b6h,0d2h,0d7h,0e2h,0eah	;^A ^E ^I ^O ^U are 850/858-only
+;
+;  a  e  i  o  u  A  E  I  O  U
+;" "a "e "i "o "u "A "E "I "O "U
+defb '"'
+defb 084h,089h,08bh,094h,081h
+defb 08eh,0d3h,0d8h,099h,09ah	;"E "I are 850/858-only
+;
+;last two dk unused
+defs 22
+
+
+;IT, Italian keyboard mapping
+type_it:
+defb 'IT      '
+
+defb knone,knone,knone,13,	kleft,knone,krshift,klshift
+defb knone,'5',knone,knone,	32,27,kctrl,kfunc
+defb knone,knone,knone,knone,	9,'1',ksymbol,kcapslk
+defb 'd','s',knone,'e',		'w','q','2','3'
+defb 'f','r',knone,'a',		'x','z',knone,'4'
+defb 'c','g','y','t',		'v','b',knone,knone
+defb 'n','h','-',097h,		kright,krdel,kdown,'6'
+defb 'k','m','u',kmenu,		kup,'<','7',08dh
+defb ',','j','i',085h,		08ah,'+',39,'8'
+defb '.','o','l',095h,		'p',kldel,'9','0'
+
+;shift mapping (22 bytes src, 22 bytes dst)
+;0                      10                            20
+;1 2 3  4 5  6 7 8 9 0  ' `i `e + `o  `a   `u  , . -  < `
+;! " pn $ %  & / ( ) =  ? ^  'e * ,c  dkdg [1] ; : _  > ~
+;[1] section sign, U+00A7
+defb '12345',			'67890'
+defb 39,08dh,08ah,'+',095h,	085h,097h,',.-'
+defb '<`'
+defb '!"',09ch,'$%',		'&/()='
+defb '?^',082h,'*',087h,	kdk1,0f5h,59,':_'
+defb '>~'
+
+;symbol mapping (15 bytes src, 15 bytes dst)
+;0              5
+;e  `e + `o `a  6 < 4 8 9
+;es [  ] @  #   \ | ~ { }
+defb 'e',08ah,'+',095h,085h,	'6<489'
+defs 5
+defb 0d5h,'[]@#',		'\|~{}'
+defs 5
+
+;dead key mapping (src always " aeiouAEIOU", 11*4 bytes dst)
+;   a   e i o u  A   E I O U
+;or ora e i o u  orA E I O U
+defb 0f8h
+defb 086h,'eiou'		;only ora/orA are available
+defb 08fh,'EIOU'
+;
+;last three dk unused
+defs 33
+
+
+;SE, Swedish keyboard mapping
+type_se:
+defb 'SE      '
+
+defb knone,knone,knone,13,	kleft,knone,krshift,klshift
+defb knone,'5',knone,knone,	32,27,kctrl,kfunc
+defb knone,knone,knone,knone,	9,'1',ksymbol,kcapslk
+defb 'd','s',knone,'e',		'w','q','2','3'
+defb 'f','r',knone,'a',		'x','z',knone,'4'
+defb 'c','g','y','t',		'v','b',knone,knone
+defb 'n','h','-',39,		kright,krdel,kdown,'6'
+defb 'k','m','u',kmenu,		kup,'<','7',kdk1
+defb ',','j','i',084h,		086h,kdk3,'+','8'
+defb '.','o','l',094h,		'p',kldel,'9','0'
+
+;shift mapping (22 bytes src, 22 bytes dst)
+;0                     10                            20
+;1 2 3 4 5  6 7 8 9 0  + dk1 ora dk3 "o  "a ' , . -  < `
+;! " # $ %  & / ( ) =  ? dk2 orA ^   "O  "A * ; : _  > ~
+defb '12345',			'67890'
+defb '+',kdk1,086h,kdk3,094h,	084h,39,',.-'
+defb '<`'
+defb '!"#$%',			'&/()='
+defb '?',kdk2,08fh,'^',099h,	08eh,'*;:_'
+defb '>~'
+
+;symbol mapping (15 bytes src, 15 bytes dst)
+;0            5            10
+;e  2 3  6 7  8 9 0 + dk3  <
+;es @ pn ^ {  [ ] } \ ~    \
+defb 'e2367', 		'890+',kdk3,	'<'
+defs 4
+defb 0d5h,'@',09ch,'^{','[]}\~',	'|'
+defs 4
+
+;dead key mapping (src always " aeiouAEIOU", 11*4 bytes dst)
+;  a  e  i  o  u   A  E  I  O  U
+;' 'a 'e 'i 'o 'u  'A 'E 'I 'O 'U
+defb 39	;quote
+defb 0a0h,082h,0a1h,0a2h,0a3h
+defb 0b5h,090h,0d6h,0e0h,0e9h
+;
+;  a  e  i  o  u  A  E  I  O  U
+;` `a `e `i `o `u `A `E `I `O `U
+defb '`'
+defb 085h,08ah,08dh,095h,097h
+defb 0b7h,0d4h,0deh,0e3h,0ebh
+;
+;  a  e  i  o  u  A  E  I  O  U
+;" "a "e "i "o "u "A "E "I "O "U
+defb '"'
+defb 084h,089h,08bh,094h,081h
+defb 08eh,0d3h,0d8h,099h,09ah	;"E "I are 850/858-only
+;
+;last dk unused
+defs 11
+
+
+;UK, UK keyboard mapping (ZCN's default)
+type_uk:
+defb 'UK      '
+
+defb knone,knone,knone,13,	kleft,knone,krshift,klshift
+defb knone,'5',knone,knone,	32,27,kctrl,kfunc
+defb knone,knone,knone,knone,	9,'1',ksymbol,kcapslk
+defb 'd','s',knone,'e',		'w','q','2','3'
+defb 'f','r',knone,'a',		'x','z',knone,'4'
+defb 'c','g','y','t',		'v','b',knone,knone
+defb 'n','h','/','#',		kright,krdel,kdown,'6'
+defb 'k','m','u',kmenu,		kup,'\','7','='
+defb ',','j','i',39,		'[',']','-','8'
+defb '.','o','l',59,		'p',kldel,'9','0'
+
+;shift mapping (22 bytes src, 22 bytes dst)
+defb '12','3', '4567890-=[];',39, '#,./\`'	;39 is ' (single quote)
+defb '!"',09ch,'$%^&*()_+{}:','@','~<>?|~'	;9ch is the pound sign
+
+;symbol mapping (15 bytes src, 15 bytes dst)
+defb '4'	;symbol-4 for euro sign, usual approach for UK
+defs 14
+defb 0d5h	;euro sign in code page 858 (i.e. revised 850 with euro)
+defs 14
+
+;all dk unused (11*4 bytes)
+defs 44
+
+
+;UKDVORAK, US Dvorak adapted for the UK NC keyboard
+type_ukdvorak:
+defb 'UKDVORAK'
+
+defb knone,knone,knone,13,	kleft,knone,krshift,klshift
+defb knone,'5',knone,knone,	32,27,kctrl,kfunc
+defb knone,knone,knone,knone,	9,'1',ksymbol,kcapslk
+defb 'e','o',knone,'.',		',', 39,'2','3'
+defb 'u','p',knone,'a',		'q',';',knone,'4'
+defb 'j','i','f','y',		'k','x',knone,knone
+defb 'b','d','z','\',		kright,krdel,kdown,'6'
+defb 't','m','g',kmenu,		kup,'<','7',']'
+defb 'w','h','c','-',		'/','=','[','8'
+defb 'v','r','n','s',		'l',kldel,'9','0'
+
+;shift mapping (22 bytes src, 22 bytes dst)
+defb '1234567890-=[];',39, '<,./\`'	;39 is ' (single quote)
+defb '!@#$%^&*()_+{}:','"','><>?|~'
+
+;symbol mapping (15 bytes src, 15 bytes dst)
+;(wasn't really sure whether to add these or not, in this case)
+defb '43'	;using UK-ish mappings
+defs 13
+defb 0d5h,09ch	;es/pn
+defs 13
+
+;all dk unused (11*4 bytes)
+defs 44
+
+
+;US, US keyboard mapping
+type_us:
+defb 'US      '
+
+defb knone,knone,knone,13,	kleft,knone,krshift,klshift
+defb knone,'5',knone,knone,	32,27,kctrl,kfunc
+defb knone,knone,knone,knone,	9,'1',ksymbol,kcapslk
+defb 'd','s',knone,'e',		'w','q','2','3'
+defb 'f','r',knone,'a',		'x','z',knone,'4'
+defb 'c','g','y','t',		'v','b',knone,knone
+defb 'n','h','/','\',		kright,krdel,kdown,'6'
+defb 'k','m','u',kmenu,		kup,8,'7','='
+defb ',','j','i',39,		'[',']','-','8'
+defb '.','o','l',59,		'p',kldel,'9','0'
+
+;shift mapping (22 bytes src, 22 bytes dst)
+defb '1234567890-=[];',39, ',./\`',0	;39 is ' (single quote)
+defb '!@#$%^&*()_+{}:','"','<>?|~',0
+
+;symbol mapping (15 bytes src, 15 bytes dst)
+;(no monopoly money pounds and euros here, obviously ;-))
+defs 30
+
+;all dk unused (11*4 bytes)
+defs 44

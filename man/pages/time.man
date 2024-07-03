@@ -1,0 +1,20 @@
+NAME
+	time - display current time/date
+
+SYNOPSIS
+	time
+
+DESCRIPTION
+	Displays the current time and date according to the NC's
+	real-time clock (RTC). (This can be set with `timeset'.) The
+	format used is YYYY-MM-DD HH:MM:SS.
+
+	The form YYYY-MM-DD is used for the date as it is arguably the
+	most logical order, and I believe it conforms to ISO 8601.
+
+BUGS
+	The NC200's real-time clock hardware effectively gets February
+	wrong on even-numbered years - see the man page for `timeset'.
+
+SEE ALSO
+	timeset

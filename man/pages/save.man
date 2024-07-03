@@ -1,0 +1,9 @@
+NAME
+	save - save N `pages' of memory
+
+SYNOPSIS
+	save num_pages filename
+
+DESCRIPTION
+	Save `num_pages' 256-byte blocks to file, starting from 100h.
+	Traditionally used to save COM files after patching.

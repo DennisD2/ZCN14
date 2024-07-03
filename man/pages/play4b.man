@@ -1,0 +1,19 @@
+NAME
+	play4b - play 4-bit sample
+
+SYNOPSIS
+	play4b sample_file
+
+DESCRIPTION
+	Play a 4-bit audio sample at about 8kHz. The sample must fit
+	in memory, which limits the maximum length to about 11
+	seconds.
+
+	Keyboard input is ignored while the program is running.
+	However, you can use the power on/off button to abort
+	playback (except on the NC200).
+
+BUGS
+	The sample is actually played at 8010Hz, which is as close to
+	8kHz as the Z80's instruction timings will allow (while
+	running faster rather than slower).

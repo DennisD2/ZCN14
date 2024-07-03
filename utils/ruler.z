@@ -1,0 +1,221 @@
+;ruler - draws a (cm) ruler on NC screen.
+;
+;Accurate to ~1mm on NC100 and presumably NC150. Not checked on NC200,
+;which is probably a lot more challenging to use as a ruler. :-)
+
+org 0100h
+
+ld a,(066h)
+cp 0f7h
+ret nz		;must be ZCN
+
+;better ZCN check
+ld c,128
+call 5
+inc a
+ret z
+
+;quit if output is not solely to normal console
+ld c,132
+call 5
+ld a,l
+and a
+ret nz
+
+;clear a diversionary screen :-) at 06000h
+;(hides the NC100/NC150 scrolling later, but NC200-sized to do it
+;there also)
+ld hl,06000h
+ld a,h
+ld de,06001h
+ld bc,8191
+ld (hl),l
+ldir
+out (0),a
+
+;clear screen
+ld e,1
+ld c,2
+call 5
+;no cursor
+ld e,4
+ld c,2
+call 5
+
+;display bitmap as characters. Given how ZCN's term.z works, we can
+;actually dump 8x6 bitmaps from the font data by drawing the same
+;character twice. This means we can show the whole ruler using just
+;120 chars of a custom font. Annoyingly though, we have to avoid 127
+;which is treated as backspace - so, two loops.
+
+ld de,fontdata-384	;start at char 64
+call runloop
+
+;no need to do CR/LF halfway, it'll auto-wrap.
+
+ld de,60*6+fontdata-384	;next 60 chars (to avoid DEL)
+call runloop
+
+;scroll it up on NC100/NC150 (pointless but harmless on NC200, where
+;top 4k is reserved)
+ld hl,0f080h
+ld de,0f000h
+ld bc,14*64
+ldir
+
+;sort out cursor location
+ld de,mfixscrn
+ld c,9
+call 5
+
+;warm boot fixes font address, cursor off, and screen addr
+rst 0
+
+
+runloop:
+ld c,142		;set font base addr
+call 5
+ld bc,60*256+64
+loop:
+push bc
+ld e,c
+push de
+ld c,2
+call 5
+pop de
+ld c,2
+call 5
+pop bc
+inc c
+djnz loop
+ret
+
+
+mfixscrn:
+defb 16,32+2,32	;move cursor to (0,1)
+defb '$'
+
+
+;ruler graphic in two rows of 60 8x6 double-width chars
+fontdata:
+defb 080h,080h,080h,080h,000h,040h
+defb 010h,000h,000h,000h,000h,000h
+defb 001h,001h,001h,001h,000h,001h
+defb 000h,000h,000h,000h,000h,000h
+defb 020h,000h,000h,000h,000h,000h
+defb 004h,004h,004h,004h,000h,00ch
+defb 000h,000h,000h,000h,000h,000h
+defb 040h,000h,000h,000h,000h,000h
+defb 008h,008h,008h,008h,000h,018h
+defb 000h,000h,000h,000h,000h,000h
+defb 080h,000h,000h,000h,000h,000h
+defb 010h,010h,010h,010h,000h,020h
+defb 002h,000h,000h,000h,000h,000h
+defb 000h,000h,000h,000h,000h,000h
+defb 020h,020h,020h,020h,000h,070h
+defb 004h,000h,000h,000h,000h,000h
+defb 000h,000h,000h,000h,000h,000h
+defb 080h,080h,080h,080h,000h,0c0h
+defb 008h,000h,000h,000h,000h,000h
+defb 001h,001h,001h,001h,000h,003h
+defb 000h,000h,000h,000h,000h,080h
+defb 010h,000h,000h,000h,000h,000h
+defb 002h,002h,002h,002h,000h,002h
+defb 000h,000h,000h,000h,000h,000h
+defb 040h,000h,000h,000h,000h,000h
+defb 004h,004h,004h,004h,000h,004h
+defb 000h,000h,000h,000h,000h,000h
+defb 080h,000h,000h,000h,000h,000h
+defb 010h,010h,010h,010h,000h,044h
+defb 001h,000h,000h,000h,000h,000h
+defb 000h,000h,000h,000h,000h,000h
+defb 020h,020h,020h,020h,000h,088h
+defb 002h,000h,000h,000h,000h,000h
+defb 000h,000h,000h,000h,000h,001h
+defb 040h,040h,040h,040h,000h,030h
+defb 008h,000h,000h,000h,000h,000h
+defb 000h,000h,000h,000h,000h,002h
+defb 080h,080h,080h,080h,000h,060h
+defb 010h,000h,000h,000h,000h,000h
+defb 002h,002h,002h,002h,000h,009h
+defb 000h,000h,000h,000h,000h,000h
+defb 020h,000h,000h,000h,000h,000h
+defb 004h,004h,004h,004h,000h,013h
+defb 000h,000h,000h,000h,000h,080h
+defb 040h,000h,000h,000h,000h,000h
+defb 008h,008h,008h,008h,000h,023h
+defb 001h,000h,000h,000h,000h,000h
+defb 000h,000h,000h,000h,000h,000h
+defb 010h,010h,010h,010h,000h,04eh
+defb 002h,000h,000h,000h,000h,000h
+defb 000h,000h,000h,000h,000h,001h
+defb 040h,040h,040h,040h,000h,010h
+defb 004h,000h,000h,000h,000h,000h
+defb 000h,000h,000h,000h,000h,002h
+defb 080h,080h,080h,080h,000h,020h
+defb 008h,000h,000h,000h,000h,000h
+defb 001h,001h,001h,001h,000h,00ch
+defb 000h,000h,000h,000h,000h,040h
+defb 020h,000h,000h,000h,000h,000h
+defb 002h,002h,002h,002h,000h,062h
+
+defb 0a0h,0a0h,0a0h,040h,000h,000h
+defb 000h,000h,000h,000h,000h,000h
+defb 003h,001h,001h,003h,000h,000h
+defb 000h,000h,000h,080h,000h,000h
+defb 000h,000h,000h,000h,000h,000h
+defb 002h,004h,008h,00eh,000h,000h
+defb 000h,000h,000h,000h,000h,000h
+defb 000h,000h,000h,000h,000h,000h
+defb 004h,008h,004h,018h,000h,000h
+defb 000h,000h,000h,000h,000h,000h
+defb 000h,000h,000h,000h,000h,000h
+defb 030h,038h,010h,010h,000h,000h
+defb 000h,000h,000h,000h,000h,000h
+defb 000h,000h,000h,000h,000h,000h
+defb 040h,060h,010h,060h,000h,000h
+defb 000h,000h,000h,000h,000h,000h
+defb 001h,001h,001h,000h,000h,000h
+defb 000h,080h,040h,080h,000h,000h
+defb 000h,000h,000h,000h,000h,000h
+defb 000h,001h,001h,001h,000h,000h
+defb 080h,000h,000h,000h,000h,000h
+defb 000h,000h,000h,000h,000h,000h
+defb 005h,002h,005h,002h,000h,000h
+defb 000h,000h,000h,000h,000h,000h
+defb 000h,000h,000h,000h,000h,000h
+defb 00ah,006h,002h,004h,000h,000h
+defb 000h,000h,000h,000h,000h,000h
+defb 000h,000h,000h,000h,000h,000h
+defb 0cah,04ah,04ah,0e4h,000h,000h
+defb 000h,000h,000h,000h,000h,000h
+defb 001h,000h,000h,001h,000h,000h
+defb 098h,088h,088h,0dch,000h,000h
+defb 000h,000h,000h,000h,000h,000h
+defb 003h,001h,001h,003h,000h,000h
+defb 008h,010h,020h,0b8h,000h,000h
+defb 000h,000h,000h,000h,000h,000h
+defb 006h,002h,002h,007h,000h,000h
+defb 010h,020h,010h,060h,000h,000h
+defb 000h,000h,000h,000h,000h,000h
+defb 019h,009h,008h,01ch,000h,000h
+defb 080h,0c0h,080h,080h,000h,000h
+defb 000h,000h,000h,000h,000h,000h
+defb 032h,013h,010h,03bh,000h,000h
+defb 000h,000h,080h,000h,000h,000h
+defb 000h,000h,000h,000h,000h,000h
+defb 064h,026h,025h,072h,000h,000h
+defb 000h,000h,000h,000h,000h,000h
+defb 000h,000h,000h,000h,000h,000h
+defb 0c2h,044h,044h,0e4h,000h,000h
+defb 000h,000h,000h,000h,000h,000h
+defb 003h,001h,001h,003h,000h,000h
+defb 028h,010h,028h,090h,000h,000h
+defb 000h,000h,000h,000h,000h,000h
+defb 006h,002h,002h,007h,000h,000h
+defb 050h,030h,010h,020h,000h,000h
+defb 000h,000h,000h,000h,000h,000h
+defb 002h,004h,008h,00eh,000h,000h
+defb 0a0h,0a0h,0a0h,040h,000h,000h
+defb 000h,000h,000h,000h,000h,000h
+defb 016h,022h,042h,077h,000h,000h

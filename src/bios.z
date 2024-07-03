@@ -1,0 +1,71 @@
+;ZCN v1.4 - a free CP/M-like OS for the Amstrad NC100 Notepad.
+;Copyright (C) 1994-2022 Russell Marks. See 'zcn.txt' for license details.
+
+;bios routines
+;I don't think it's worth doing the disk functions.
+;Besides which, I'm not sure I really *can*. :-(
+
+
+;*** bios stuff ***
+
+;`wboot' moved to init.z
+
+;setup to use internal stack and restore old one on ret.
+;called by all bios routines, except trivial ones.
+;BTW, trivial = uses no extra stack. :-)
+bisetup:
+ei
+pop hl
+ld (bstksav),sp
+ld sp,intstack	;use internal stack
+ld de,bexitstk	;push addr of stack-restore routine for 'ret'
+push de
+call chksdmp
+jp (hl)		;return to calling BIOS routine
+
+biconin:
+call bisetup
+biclp:
+call bdgetkey
+jr nc,biclp
+ret
+
+biconout:
+call bisetup
+ld e,c
+jp bconout
+
+bicnstat:
+call bisetup
+jp bconstat
+
+
+bilstout:
+call bisetup
+ld e,c
+jp blstout
+
+
+biauxout:
+call bisetup
+ld e,c
+jp bauxout
+
+biauxin:
+call bisetup
+jp bauxin
+
+
+;none of the rest done - give an error if called
+bihome:
+biseldsk:
+bisettrk:
+bisetsec:
+bisetdma:
+biread:
+biwrite:
+bilistst:
+bisectrn:
+call ilprint
+defb 'BIO',_caps+_s_,'err',_or,0
+rst 0

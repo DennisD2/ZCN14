@@ -1,0 +1,68 @@
+.z80
+;
+	cseg
+;
+fcb	equ	5ch
+;
+striph:
+	ld	hl,fcb+12
+	ld	de,fcb+13
+	ld	bc,30
+	ld	(hl),0
+	ldir
+	ld	de,fcb
+	ld	c,15
+	call	5
+	inc	a
+	jr	nz,openok
+;
+	ld	de,notfmsg
+	ld	c,9
+	call	5
+	jp	0
+;
+notfmsg:	db	'File not found$'
+;
+openok:
+	ld	de,fcb
+	ld	c,20
+	call	5
+	or	a
+	jr	z,readok
+;
+	ld	de,rdemsg
+	ld	c,9
+	call	5
+	jp	0
+;
+rdemsg:	db	'Read error$'
+;
+readok:
+	ld	de,fcb
+	ld	c,16
+	call	5
+	ld	hl,(80h+4)
+	xor	a
+	rl	l
+	rl	h
+	ld	l,h
+	rl	a
+	ld	h,a
+	inc	hl
+	ld	(fcb+33),hl
+	xor	a
+	ld	(fcb+35),a
+	ld	de,fcb
+	ld	c,99
+	call	5
+	or	a
+	jp	z,0
+	ld	de,trmsg
+	ld	c,9
+	call	5
+	jp	0
+;
+trmsg:	db	'Truncate error$'
+;
+	end	striph
+

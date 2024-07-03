@@ -1,0 +1,31 @@
+NAME
+	prompt - how to set the prompt with the `%' command
+
+SYNOPSIS
+	%prompt
+
+DESCRIPTION
+	`%prompt' sets ZCN's prompt to `prompt' (25 characters
+	maximum). Certain codes in the prompt string have special
+	meaning, as shown below:
+
+	%a	current user area
+	%b	current user area, if non-zero (otherwise, prints nothing)
+	%c	space left on current drive
+	%d	current drive letter
+	%e	current drive letter in lowercase
+	%%	a literal percent sign
+
+EXAMPLES
+	The default prompt string is `%d%b>' (which could be defined
+	with the command `%%d%b>').
+
+	A prompt I used to use was `rus@amnesia:/%e/%a>'. This shows
+	one way you can get something which looks a bit like a `path'
+	into the prompt.
+
+BUGS
+	Unrecognised `%' codes are ignored, rather than causing an
+	error or warning.
+
+	A `%' at the end of the prompt string is printed literally.

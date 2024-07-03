@@ -1,0 +1,17 @@
+md5cpm is a simple md5sum program for CP/M and ZCN. It's really just a
+frontend for Solar Designer's md5.c/md5.h which compiles fine in
+Hitech C with the application of a big enough hammer^W^W^W^Wsome very
+minor changes.
+
+Although it is (very) slow and large, because doing tons of 32-bit
+maths is a real pain on a Z80 (and Hitech C absolutely loves using
+IX), it can still be useful to have as md5sum programs are widely
+available on other computers - notably the md5sum from GNU coreutils,
+as you can expect to find on e.g. Linux systems.
+
+For more details (and caveats) see ../../doc/zcn.txt and the man page.
+
+NB: Ordinarily you should use the ../zx0alt/md5cpm.com version, which
+is far smaller than the one here.
+
+-Rus.

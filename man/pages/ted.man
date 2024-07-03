@@ -1,0 +1,94 @@
+NAME
+	ted - text editor
+
+SYNOPSIS
+	ted [filename]
+
+DESCRIPTION
+	TED is a screen-oriented text editor that can be used to
+	create new files and edit existing ones.
+
+	Files edited should be ASCII, as any high bits will be lost.
+	Files larger than memory can be edited - but disk space will
+	be needed for a temporary file, which may be larger than the
+	file being edited.
+
+	This man page covers the basics at a simplified level; much is
+	omitted.
+
+OPTIONS
+	filename	if specified, the file to edit. This runs the
+			"r filename" command, then enters edit mode.
+
+KEYS
+	In command mode:
+
+	^Z	exit without saving
+	^C	switch to edit mode
+	^G	repeat last command
+
+	In edit mode:
+
+	^C/^Z	exit edit mode
+	^B/^N	enter browse mode
+	^E/^X	cursor up/down (cursor keys do the same)
+	^S/^D	cursor left/right (ditto)
+	^L	move to start-then-end of line
+	^T	move to start-then-end of screen
+	^R	redraw screen
+	^Y	delete line
+	^K	insert empty line
+	^P	duplicate current line
+	^V	toggle insert/overstrike
+
+	In browse mode:
+
+	^E/^X	page up/down
+	^S/^D	pan left/right
+	^C	exit to edit mode
+
+COMMANDS
+	ex		exit without saving
+	cl		clear buffer, losing all changes
+	r file		read file
+	w [file]	write file
+	num		jump to line number num ($=last)
+	/str/		search for str, then edit mode
+	su /old/new/	replace old with new everywhere
+	su m /old/new/	...with confirmation
+	p		show current line number
+	pr p1 [p2]	show line/range
+	d p1 [p2]	delete line/range
+	m p1 p2 p3	copy line range p1-p2 to line p3
+	md p1 p2 p3	move line range p1-p2 to line p3 (does copy & del)
+
+EXAMPLES
+	To create/edit a file foo.txt, start with "ted foo.txt" and
+	edit as required. To save and exit, press ^C, then type "w"
+	and "ex" as separate commands.
+
+	To page up/down, use browse mode (^B or ^N) then ^E/^X or
+	cursor up/down - ^C exits browse mode. Looking at it another
+	way - from edit mode, page up = ^N^E^C, page down = ^N^X^C.
+
+	To move to the top of the buffer, from edit mode use ^C, then
+	type "1" as a command. To move to the bottom, do the same
+	except type "$" as the command.
+
+	To find the first match for "foo" in the buffer, in command
+	mode do "/foo/(1)".
+
+FILES
+	editor.tmp - virtual memory file used by TED
+
+BUGS
+	The lack of word wrap and dedicated page up/down keys are not
+	technically bugs, though it may feel that way. :-)
+
+AUTHOR
+	Hector Peraza
+
+SEE ALSO
+	ted200, note
+
+	support/ted/docs (in ZCN distribution)

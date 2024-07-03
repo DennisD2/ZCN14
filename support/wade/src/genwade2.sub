@@ -1,0 +1,18 @@
+;Generate WADE for CP/M 2 or TurboDos
+;Equate CPM3 in MONOPT.LIB must be FALSE
+;
+rmac moncpm $$sz pz
+rmac monit $$sz pz
+rmac monbreak $$sz pz
+rmac montab $$sz pz
+rmac mondis $$sz pz
+rmac monsub $$sz pz
+rmac monexpr $$sz pz
+rmac monasm $$sz pz
+rmac monsym $$sz pz
+rmac monpeek $$sz pz
+rmac wade $$sz pz
+link wade2st=wade
+link monprl=moncpm,monit,monbreak,montab,mondis,monsub,monexpr,monasm,monsym,monpeek[op]
+pip wade2.com=wade2st.com[o],monprl.prl[o]
+

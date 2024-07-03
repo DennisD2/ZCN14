@@ -1,0 +1,82 @@
+NC200 card image contents
+
+
+Drive A:
+
+     Name    Bytes   Recs  Attr     update             create
+------------ ------ ------ ---- -----------------  -----------------
+BBCBAS  .COM     8K     60    
+BBCMIN  .COM     3K     24    
+BIGV    .COM     4K     30    
+BMP     .COM     1K      2    
+CAL     .COM     2K     16    
+CODES   .COM     1K      5    
+CPMTRIS .COM     3K     22    
+DCLOCK  .COM     1K      8    
+DEFRAG  .COM     1K      8    
+DU      .COM     1K      2    
+EXPR    .COM     2K     14    
+HEAD    .COM     1K      2    
+K       .COM     3K     19    
+KEYB    .COM     3K     19    
+LFCONV  .COM     1K      8    
+LS      .COM     1K      8    
+MAN     .COM     2K     12    
+MANPAGES.DAT    45K    355    
+MD5CPM  .COM     8K     60    
+OPTDIR  .COM     1K      5    
+PIPE    .COM     1K      8    
+QTERM   .COM    18K    138    
+RRXFER  .COM     4K     27    
+RULER   .COM     1K      7    
+RUNROM  .COM     1K      8    
+SEMI    .COM     1K      2    
+SLIDE   .COM     3K     24    
+SPELL   .COM     4K     30    
+SPELLWD .COM     1K      4    
+SUBMIT  .COM     1K      6    
+TED200  .COM    11K     88    
+TIME    .COM     1K      2    
+TIMESET .COM     1K      5    
+ZCSOLI  .COM     2K     16    
+ZDBE    .COM     3K     24    
+ZSELX   .COM     5K     34    
+   36 Files occupying    150K,      91K Free.
+
+
+Drive B:
+
+     Name    Bytes   Recs  Attr     update             create
+------------ ------ ------ ---- -----------------  -----------------
+BS200   .COM    18K    142    
+CHESS   .COM    26K    204    
+FISH    .COM    11K     83    
+LAR     .COM    16K    121    
+NCSPEED .COM     3K     20    
+NCTEST  .COM     2K      9    
+ROGUE   .COM    24K    187    
+WADE    .COM    15K    114    
+    8 Files occupying    115K,     138K Free.
+
+
+Drive C:
+
+     Name    Bytes   Recs  Attr     update             create
+------------ ------ ------ ---- -----------------  -----------------
+ARPENT  .4B     36K    282    
+PLAY4B  .COM     1K      2    
+ROGUEVT .COM    23K    178    
+STAT    .COM     1K      2    
+TEDVT   .COM    11K     88    
+ZRX     .COM     1K      4    
+    6 Files occupying     73K,     180K Free.
+
+
+Drive D:
+
+     Name    Bytes   Recs  Attr     update             create
+------------ ------ ------ ---- -----------------  -----------------
+BLANK   .TXT     1K      1    
+    1 Files occupying      1K,     252K Free.
+
+

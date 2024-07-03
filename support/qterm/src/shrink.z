@@ -1,0 +1,48 @@
+; shrink.z - buffers and pointers that get small for a "shrunk" QTERM
+
+.var	memtop	6
+
+.extern	setshr
+setshr:
+	ld	hl,(memtop)
+	ld	de,work2 + 16384 + 1024
+	or	a
+	sbc	hl,de
+	ex	de,hl
+	ld	hl,xfersz
+	set	3,(hl)
+	ret	nc
+	set	2,(hl)
+	ld	hl,work2 + 4096
+	ld	(cbuff),hl
+	ld	hl,work2 + 8192
+	ld	(endcbf),hl
+	ld	hl,4095
+	ld	(cbfsiz),hl
+	ld	a,4096 / 128
+	ld	(btxf),a
+	ld	(obtxf),a
+	ld	hl,8192
+	add	hl,de
+	ret	c
+	call	ilprt
+	db	'Insufficient memory\r\n\0'
+	rst	0
+
+.dseg
+.extern	cbuff
+cbuff:	dw	work2 + 8192
+.extern	endcbf
+endcbf: dw	work2 + 16384
+.extern	cbfsiz
+cbfsiz:	dw	8191
+.extern	btxf
+btxf:	db	8192 / 128
+.extern	obtxf
+obtxf:	db	8192 / 128
+
+.useg
+.extern	work2
+work2:
+	ds	16384		; so that #end in the .SYM file is right
+

@@ -1,0 +1,84 @@
+; send.z - protocol send code for qterm
+
+.var	ipbuf	0x80
+
+.extern	send
+send:
+	call	pmode
+	inc	hl
+	jr	z,modokk
+	cp	'x'
+	jr	z,modok		; k & x are the only legal modes (for now)
+
+.extern	moderr
+moderr:
+	call	ilprt
+	db	'Unknown mode\r\n\0'
+	ret
+
+modokk:
+	ld	a,(hl)
+	or	0x20
+	cp	'f'
+	jr	z,arefil
+	cp	'l'
+	jr	z,arefil
+	xor	a
+modok:	push	hl		; save pointer
+	push	af		; and mode character
+	call	unbyp		; step over flags
+	call	scnswl		; parse names
+	ld	hl,(fnbspt)
+	ld	de,work
+	pop	af
+	sbc	hl,de
+	pop	hl
+	jr	nz,arefil	; any files found?
+	call	ilprt		; tell if not
+	db	'No files to send\r\n\0'
+	ret
+arefil:	ex	af,af'
+	ld	a,(xfersz)	; get proposed transfer size
+	ld	e,4
+sizlp:	sla	e		; shift size around in e
+	rra
+	jr	nc,sizlp	; loop till we hit a bit
+	ld	a,e
+	ld	(btxf),a	; and save it away
+	ex	af,af'
+	cp	'x'		; Kermit or Xmodem
+	jr	z,sendx
+	call	sendk		; send kermit
+	jr	xferdj		; and unwrap
+sendx:	call	xmflgs		; parse xmodem flags
+	call	initx
+	call	initsn		; set up screen
+	ld	hl,(mdm7b)
+	ld	a,h
+	or	l		; batch send?
+	jr	z,nosb		; no - just send one file
+	ld	a,(longpk)
+	ld	(olp),a		; save 1K packet flag
+sblp:	call	srnxt
+	jr	z,doneb		; loop till all names done
+	call	xsfile		; send a file
+	jr	nz,xferdj	; terminate on an error
+	ld	a,(olp)
+	ld	(longpk),a	; reset 1K packet flag
+	jr	sblp
+doneb:	xor	a
+	ld	(auxfcb + 2),a	; set flag for end of transfer
+	jr	xjsf
+nosb:	call	srnxt		; single file send - get it
+	jr	nz,xjsf		; send it if it exists
+	call	can3		; kill the far end
+	xor	a
+	inc	a
+	jr	xferdj		; and return error
+xjsf:	call	xsfile		; send single file or batch close
+xferdj:	push	af
+	ld	a,(obtxf)
+	ld	(btxf),a	; reset transfer size to whatever
+	pop	af
+	jp	xferd
+

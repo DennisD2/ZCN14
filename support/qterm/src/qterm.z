@@ -1,0 +1,903 @@
+; qterm.z - patch area and main control loop for qterm
+
+.incl	"c:vars"
+.incl	"c:version"
+
+.var	escchr	'\\' & 0x1f
+.var	biosjp	1
+.var	memtop	6
+
+.macro	table	byte,addr
+	dw	addr
+	db	byte
+.endm
+
+	jp	start		; skip over the patch area
+
+; now for the screen access routines - these are put here because moveto
+; will have to access scrout, and this provides a ready access point
+
+#kbdsts:
+	jp	6		; keyboard status routine
+#kbdin:
+	jp	9		; keyboard input routine
+#scrout:
+	jp	12		; screen output
+	jp	decoj		; access to decimal output routine
+
+; These bits are system dependant, and are put at the beginning of the
+; program so that them as what needs to change them, can.
+
+; modist - return with z flag clear iff there is a char waiting at modem port
+
+.org	0x0010
+#modist:
+	ld	hl,(_base_)
+	ld	a,(hl)
+	inc	hl
+	xor	(hl)
+	ret
+
+; modin - read char from modem port: modist has been used to check it's there
+
+.org	0x0020
+#modin:
+	ld	hl,(_base_)
+	inc	(hl)
+	res	5,(hl)
+	ld	e,(hl)
+	inc	hl
+	inc	hl
+	ld	d,0
+	add	hl,de
+	ld	a,(hl)
+	ret
+
+; modost - return with z flag clear iff the modem can accept another char
+
+.org	0x0030
+#modost:
+	in	a,(0x2e)
+	and	0x80
+	ret
+
+; modout - send char to modem port
+
+.org	0x0040
+#modout:
+	out	(0x2f),a
+	ret
+
+; sbreak - start a break condition on line
+
+.org	0x0050
+#sbreak:
+	ld	a,0x0d
+	out	(0x2e),a
+	ret
+
+; ebreak - terminate break condition
+
+.org	0x0060
+#ebreak:
+	ld	a,0x05
+	out	(0x2e),a
+	ret
+
+; dtroff - disable dtr to cause modem to hang up
+
+.org	0x0070
+.extern	#dtroff			; external so hangup can work
+#dtroff:
+	ld	a,0x24
+	out	(0x21),a
+	ret
+
+; dtron - re-enable dtr
+
+.org	0x0080
+#dtron:
+	xor	a
+	out	(0x21),a
+	ret
+
+; setbd - take byte in a from baud table, use it to set baud rate
+
+.org	0x0090
+#setbd:
+	out	(0x2b),a
+	ret
+
+; these next eight are byte pairs - the first byte is used by setbd above.
+; the second is a -1 for an active baud rate entry, and a 0 for inactive
+
+.org	0x00a0
+.extern	b38400
+b38400:	db	0,no
+.extern	b19200
+b19200:	db	0,no
+.extern	b9600
+b9600:	db	1,yes
+.extern	b4800
+b4800:	db	2,yes
+.extern	b2400
+b2400:	db	4,yes
+.extern	b1200
+b1200:	db	8,yes
+.extern	b600
+b600:	db	16,yes
+.extern	b300
+b300:	db	32,yes
+
+; setmod - take a byte from the mode table, use it to set the uart mode
+
+.org	0x00b0
+#setmod:
+	out	(0x2c),a
+	ret
+
+; now the twelve mode bytes for setting comm format
+
+.org	0x00c0
+.extern	modtab
+modtab:
+n17:	db	0b10101010
+n18:	db	0b10001010
+n27:	db	0b10111010
+n28:	db	0b10011010
+e17:	db	0b10101110
+e18:	db	0b10001110
+e27:	db	0b10111110
+e28:	db	0b10011110
+o17:	db	0b10101100
+o18:	db	0b10001100
+o27:	db	0b10111100
+o28:	db	0b10011100
+
+.org	0x00cc
+.extern	resrvd
+resrvd:
+	db	0
+
+; xfersz - number of K to read / write to disk during protocol transfers:
+; must be 1 / 2 / 4 / 8. Generally this is best left at 8 unless you have
+; a REALLY slow disk (C128 maybe) when writing / reading 8K at a time
+; causes timeouts. Drop this to 4 or 2 to do disk access in smaller chunks
+; to help avoid the timeout problem
+
+.extern	xfersz
+xfersz:	db	8
+
+; speed - simply the cpu speed for a z80 in mhz.
+
+.extern	speed
+speed:	db	4
+
+; escape - this is the character used as the escape char: since the addresses
+; in the table tend to move, we just put the byte here, and then transfer
+; to the table later
+
+escape:	db	escchr
+
+; the signon message - change this to be appropriate for your system
+
+.org	0x00d0
+signon:	db	'Televideo TS803\0'
+
+; now the string for clear screen
+
+.org	0x00f0
+.extern	clrs
+clrs:	db	'z' & 0x1f, 0
+
+; moveto - this routine is called with a word in hl - h = row &
+; l = column to move to, at 109 is a routine to print a char in c,
+; at 10c is a routine to print a decimal number in hl (for ansi tubes)
+
+.org	0x0100
+#moveto:
+	push	hl		; save coords
+	ld	c,'\e'
+	call	#scrout		; lead in escape
+	ld	c,'='
+	call	#scrout		; leadin '='
+	pop	hl
+	push	hl
+	ld	a,h		; row to a
+	call	poff		; out it goes w/ offset
+	pop	hl
+	ld	a,l		; col to a
+poff:	add	a,' '		; add offset
+	ld	c,a
+	jp	#scrout		; & print it
+
+; these next strings are used to do various screen functions. There are
+; eight of them, and immediately preceding them is a flag byte. Each string
+; has a bit in the byte, and if a capability is present, its bit should
+; be set. This byte is an absolute necessity, as various programs use it
+; to tell if various things are present.
+
+.org	0x012f
+.extern	tcbits
+tcbits:
+	db	0b11111111
+;		  ||||||||
+;		  |||||||+------ 0: bright (end highlight)
+;		  ||||||+------- 1: dim (start highlight)
+;		  |||||+-------- 2: delete line
+;		  ||||+--------- 3: insert line
+;		  |||+---------- 4: delete character
+;		  ||+----------- 5: insert character
+;		  |+------------ 6: clear to end of line
+;		  +------------- 7: clear to end of screen
+
+.org	0x0130
+.extern	brites
+brites:	db	'\e(\0'
+
+.org	0x0138
+.extern	dims
+dims:	db	'\e)\0'
+
+.org	0x0140
+.extern	dlstr
+dlstr:	db	'\eR\0'
+
+.org	0x0148
+.extern	ilstr
+ilstr:	db	'\eE\0'
+
+.org	0x0150
+.extern	dcstr
+dcstr:	db	'\eW\0'
+
+.org	0x0158
+.extern	icstr
+icstr:	db	'\eQ\0'
+
+.org	0x0160
+.extern	ceol
+ceol:	db	'\eT\0'
+
+.org	0x0168
+.extern	ceos
+ceos:	db	'\eY\0'
+
+; Entry and exit hooks. These are provided to perform custom initialisation
+; on startup, and also to perform custom code on exit.
+
+.org	0x0170
+.extern	entry
+entry:	jp	do_ent
+
+.org	0x0173
+.extern	exit
+exit:	jp	do_ext
+
+.org	0x0176
+.extern	#user
+#user:
+.if	dg
+	jp	_user_		; go do ours
+.else
+	ret
+.endif
+
+.org	0x0179
+.extern	#kbmap
+#kbmap:
+.if	dg
+	jp	_kbmp_		; hook into keyboard map routine
+.else
+	ret
+.endif
+
+.org	0x017c
+_ilpr_:	jp	prmpjp
+
+; finally a patch area that is provided for patching odd systems that need
+; a lot of space.
+
+.org	0x0180
+
+do_ent:
+
+.if	dg
+
+	ld	c,14
+	ld	e,3
+	call	5
+	ld	c,32
+	ld	e,30
+	call	5
+	ld	a,0b10001010		; 8n1
+	out	(0x2c),a
+	ld	a,4			; 2400
+	out	(0x2b),a
+
+.endif
+
+	di
+	ld	hl,(0xff00)
+	xor	a
+	ld	(hl),a
+	ld	(_base_),hl	; OK, use GSX interface area for interrupts
+	inc	hl
+	ld	(hl),a
+	ld	(_here_ + 1),hl
+	ld	de,33
+	add	hl,de
+	ex	de,hl
+	push	de
+	ld	hl,icode
+	ld	bc,{endi - icode}
+	ldir
+	ld	c,0x10
+	pop	de
+	jr	endit
+
+do_ext:	di
+	ld	de,(ivec)
+	ld	c,0
+
+endit:	ld	a,i
+	ld	h,a
+	ld	l,0x78
+	ld	a,(hl)
+	ld	(hl),e
+	ld	e,a
+	inc	hl
+	ld	a,(hl)
+	ld	(hl),d
+	ld	d,a
+	ld	(ivec),de
+	ld	a,0x65
+	out	(0x28),a
+	ld	a,c
+	out	(0x20),a
+	out	(0x27),a
+	ld	a,0x64
+	out	(0x28),a
+	ei
+clrlp:	in	a,(0x2f)
+	in	a,(0x2d)
+	add	a,a
+	jr	c,clrlp
+	ret
+
+icode:	di
+	push	hl
+	push	af
+iclp:	in	a,(0x2d)
+	add	a,a
+	jr	nc,icdone
+_here_:	ld	hl,0			; filled in later
+	inc	(hl)
+	res	5,(hl)
+	ld	a,(hl)
+	inc	hl
+	add	a,l
+	ld	l,a
+	jr	nc,hok
+	inc	h
+hok:	in	a,(0x2f)
+	ld	(hl),a
+	jr	iclp
+icdone:	pop	af
+	pop	hl
+	ei
+	reti
+endi:
+
+ivec:	dw	0
+_base_:	dw	0
+
+.if	dg
+
+.var	linesz	40		; default number of chars before we start
+
+_user_:
+	call	_ilpr_		; prompt for and get an answer
+	db	'Split? \0'
+	ld	hl,0x7f		; point just before it
+_byp:	inc	hl
+	ld	a,(hl)		; get the next character
+	cp	' '		; space?
+	jr	z,_byp		; yes, skip over it
+	sub	'0'
+	cp	10
+	jr	c,_numbr	; numeric input - go handle it
+	add	a,'0'		; convert back
+	or	0x20		; force lower case
+	xor	0x20		; this really tests for a null .....
+	jr	z,_gtans	; yes, save zero byte
+	xor	0x20 ^ 'y'	; and check for a 'y' (including 'Y')
+_gtans:	ld	(split),a	; save the flag - zero enables, non-zero
+				; disables
+	ld	a,linesz	; set line length to default of 40
+_setll:	ld	(linlen),a	; set the line length from a
+	xor	a
+	ld	(count),a	; and set the count to zero
+	ret
+
+_numbr:	ld	e,a		; save current value in e
+	inc	hl		; point to next character
+	ld	a,(hl)
+	sub	'0'		; convert .....
+	cp	10		; and test if it's a digit
+	jr	nc,_gtnum	; nope - we're all done
+	ld	d,a
+	ld	a,e
+	add	a,a		; a = e * 2
+	add	a,a		;       * 4
+	add	a,e		;       * 5
+	add	a,a		;       * 10
+	add	a,d		;       + d
+	jr	_numbr
+_gtnum:	xor	a
+	ld	(split),a	; else set split flag to enable
+	ld	a,e		; and get the line length back from e
+	jr	_setll		; go do the set with whatever we have
+
+_kbmp_:	and	0x7f		; ditch bit 7, just because I'm paranoid
+_nodel:	ld	hl,split	; point at the flag
+	inc	(hl)
+	dec	(hl)
+	ld	c,a		; save char in c
+	jp	nz,_jstcn	; not splitting - get outa here
+	ld	hl,(state)
+	ld	a,h
+	or	l		; are we in the middle of a line break?
+	jr	nz,_linbr	; yes, so handle it elsewhere
+	ld	a,c		; get the character back from c
+	ld	hl,0x01cf	; point at the escape character
+	cp	(hl)
+	ret	z		; we have to let these through!
+	ld	hl,count	; point hl at the count for everyone
+	cp	'\b'
+	jr	z,_bcksp	; handle backspaces
+	cp	'y' & 0x1f
+	jr	z,_ctly		; and ^Y's
+	cp	'\r'
+	jr	z,_retrn	; and returns
+	cp	'\n'
+	jr	z,_newln	; and linefeeds
+	inc	b		; set b to 1 for a potential swallow
+	cp	0x7f		; throw away deletes
+	ret	z
+	cp	' '		; is it a space?
+	jr	z,_space	; handle specially if so
+	ret	c		; and throw away other control characters
+	dec	b		; reset b to pass the single character
+	inc	(hl)		; bump count
+	ret			; and return - char is still in a
+
+_bcksp:	dec	(hl)		; anything in the current count
+	inc	b		; set b to 1 for a swallow
+	inc	(hl)		; restore count
+	ret	z		; and return if nothing there
+	dec	(hl)		; decrement count since we're allowing it
+	dec	b		; reset b
+	ret
+
+_retrn:	ld	hl,retstr	; point at the return string
+	jr	_linbr
+
+_newln:	ld	hl,nlstr	; point at the new line string
+	jr	_linbr
+
+_ctly:	ld	hl,(count)
+	ld	h,0		; set state from count
+	or	a
+	jr	_setbs
+
+_space:	inc	(hl)		; we passed another character, count it
+	ld	a,(linlen)	; get the line length
+	cp	(hl)		; too long yet?
+	ld	a,c
+	dec	b
+	ret	nc		; no, return character in a
+	ld	hl,string	; else point at the string to send
+
+_linbr:	ld	a,h
+	or	a
+	jr	z,_sndbs	; if h is zero, send l backspaces
+	ld	a,(hl)		; get the next character from the string
+	inc	hl		; move the pointer
+	inc	(hl)
+	dec	(hl)		; end of string?
+	ld	b,2		; set b to 2 to say there's more coming
+	jr	nz,_savhl	; not end of string, save hl and return
+	ld	b,(hl)		; set b to zero again
+	ld	hl,count
+	ld	(hl),b		; zero out the count from b
+	ld	h,b
+	ld	l,b		; set hl to zero to reset the state machine
+_savhl:	ld	(state),hl	; save the pointer / NULL
+	ret
+
+_sndbs:	dec	l		; one less to go
+_setbs:	ld	(state),hl	; save the state back
+	ld	b,2		; flag more to come
+	jr	nz,_bok		; unless this is the last
+	ld	b,h		; in which case b gets zero
+	ld	(count),a	; set count to zero (a is zero from jp above)
+_bok:	ld	a,'\b'		; stuff a backspace in a, and we're done
+	ret
+
+_jstcn:	ld	hl,(state)
+	ld	a,h
+	or	l		; are we in the middle of a line break?
+	jr	nz,_linbr	; yes, so handle it elsewhere
+	ld	a,c
+	ld	b,0
+	ld	hl,count	; point hl at the count for everyone
+	cp	'\b'
+	jr	z,_cbksp	; count backwards
+	cp	'\n'
+	jr	z,_cntrt	; count return's - set to zero
+	cp	'\r'
+	jr	z,_cntrt
+	cp	'y' & 0x1f
+	jr	z,_ctly		; handle ^Y's
+	cp	' '
+	ret	c		; let control chars pass, but don't count them
+	inc	(hl)
+	ret
+_cntrt:	ld	(hl),b		; set count to zero
+	ret
+
+_cbksp:	dec	(hl)		; anything in the current count
+	inc	(hl)
+	ret	z		; no, leave count alone
+	dec	(hl)		; drop it back by one
+	ret			; all done
+
+count:	db	0		; count of chars since the last new line
+linlen:	db	linesz		; line size we're currently using
+split:	db	1		; flag if we're splitting: zero => we are
+state:	dw	0		; what state are we in?
+
+string:	db	' .....\r\0'	; space string to break lines
+retstr:	db	' [end]'	; return string to end a paragraph
+nlstr:	db	'\r\0'		; newline to end
+
+.endif
+
+.org	0x0400
+
+; put this jump here, because decout may move, so we can't have it's address
+; in the patch area
+
+decoj:	jp	decout
+
+; same again: prompt may move
+
+prmpjp:	jp	prompt
+
+; now the start of the main code
+
+start:	ld	sp,(memtop)	; set the stack
+	ld	a,(biosjp + 1)	; get the bios base address
+	ld	(#kbdsts + 2),a
+	ld	(#kbdin + 2),a
+	ld	(#scrout + 2),a	; fix the three jumps
+	call	#subchk		; but now check for XSUB installed
+	ld	a,(escape)
+	ld	(escval),a	; set the escape character in the jump table
+	call	setshr		; do shrink adjustment
+	ld	a,(xfersz)
+	ld	hl,512
+sizlp:	add	hl,hl		; set size in K in hl
+	rra
+	jr	nc,sizlp	; loop till size is set in hl
+	ld	de,work2
+	add	hl,de
+	ld	(ew2p),hl	; and set pointer for transfers
+	ld	hl,fktbl
+	ld	de,fktbl + 1
+	ld	bc,16 * 10 - 1
+	ld	(hl),b
+	ldir			; clear fk table initially
+	call	entry		; do the users custom code
+	ld	sp,(memtop)	; reload the stack pointer in case things got
+				; bashed in the entry hook
+	call	ilprt		; print fixed part of signon
+	db	'QTERM  V'
+	version
+	db	'\r\n'
+	db	'(C) Copyright  DPG  '
+	year
+	db	' - All rights reserved\r\n'
+	db	'Version for \0'
+	call	dim
+	ld	hl,signon
+	call	prtslp		; print the system signon message
+	call	ilprt
+	db	'\r\nEscape character is \0'
+	call	dim
+	call	presc		; remind what the escape character is
+	call	crlf
+	call	crlf		; throw a newline or two
+	ld	a,(#dtroff)
+	cp	0xc9
+	call	nz,dtron	; enable dtr
+	ld	c,getdrv	; now, in case we changed drive / user in the
+	call	bdos		; entry hook, we get the current drive / user
+	ld	(curdrv),a
+	ld	(chtdrv),a	; chat drive
+	ld	c,gsuser
+	ld	e,0xff
+	call	bdos		; find out which user
+	ld	(curusr),a	; save it away as well
+	ld	(chtusr),a	; chat user
+	ld	hl,0x80		; get command tail
+	ld	e,(hl)		; get it's length
+	ld	(hl),' '	; add a space so that byp will grok it
+	inc	hl
+	ld	d,h		; extend length to de
+	ex	de,hl
+	add	hl,de
+	ld	(hl),d		; stick a zero byte on the end of it
+	ex	de,hl		; base address back to hl
+	call	byp		; was there anything there?
+	or	a
+	call	nz,ichat	; yes - go process it
+
+; this loop provides terminal mode: it simply loops round polling the kdb &
+; modem port - when it finds something, then it starts to get clever
+
+.extern	main
+main:	ld	sp,(memtop)	; since we long jump here occasionally
+	ld	hl,main
+	push	hl		; push "here" so a return gets us back
+	ld	a,lf_bit
+	ld	(mode),a	; reset mode
+	call	lstmod		; keep the printer going and check modem port
+	ld	hl,(fkptr)
+	ld	a,(hl)
+	or	a		; sending a function key?
+	jr	z,nofkey	; nope, go try the keyboard
+	call	conin		; get the key
+	jr	gotcon
+nofkey:	ld	(prmpfl),a
+	ld	a,(more)
+	rra			; should we get a keyboard character
+	jr	c,skipin	; skip if not
+	call	kbdsts		; keyboard ready?
+	or	a
+	ret	z		; no, loop back
+	call	kbdin		; get the char
+skipin:	ld	b,0		; set b so a return is a no-op
+	call	#kbmap		; run through the keyboard window
+	srl	b
+	ret	c		; swallowed, start again
+gotcon:	ld	c,a		; save in c
+	ld	a,b		; copy more bit to a
+	ld	(more),a	; and save it
+	ld	de,escstt
+	ld	a,(de)		; what state are we in?
+	dec	a
+	ld	a,c		; get char back
+	jr	z,hadesc	; we've had an esc char, handle next
+	ld	hl,cschr
+	cp	(hl)
+	call	z,gotxof	; note passing xoff's
+	jr	z,noxon
+	ld	hl,lxoff
+	inc	(hl)
+	dec	(hl)
+	ld	hl,escval
+	jr	nz,noxon
+	cp	(hl)
+	call	nz,gotxon	; and xon's
+noxon:	cp	(hl)		; test the char for an escape
+	jr	nz,modopj	; no it's not, send it to the modem
+	ld	hl,(fkptr)
+	ld	a,(hl)		; in the midst of a pfk send?
+	or	a
+	ld	a,(escval)	; get an escape char back into a
+modopj:	jr	z,gotesc	; yes - skip the usual escape
+	ld	a,(wflg)
+	or	a
+	ld	a,c
+	call	nz,limitb	; legal character?
+	ret	c		; nope - exit now
+modjp:	jp	modop
+
+; gotesc - we just got the escape char in state 0: set state to 1
+
+gotesc:	ex	de,hl
+	inc	(hl)		; set state to 1
+	ret
+
+; esctbl - table of special values for the escape handler
+
+.dseg
+esctbl:	dw	modop
+.extern	escval
+escval:	db	escchr
+	table	'?',help
+	table	'.',break
+	table	0x2c,hangup
+	table	'B',baud
+	table	'C',catch
+	table	'D',dir
+	table	'E',echo
+	table	'H',hdxtog
+	table	'I',info
+	table	'J',jctog
+	table	'K',ldfnk
+	table	'L',lftog
+	table	'M',msbtog
+	table	'N',newdsk
+	table	'O',optog
+	table	'P',print
+	table	'Q',quit
+	table	'R',recv
+	table	'S',send
+	table	'T',type
+	table	'U',#user
+	table	'V',vttog
+	table	'W',witog
+	table	'X',chat
+	table	'Y',hold
+	table	'Z',cclose
+tblend:
+.cseg
+
+; hadesc - we are in state 1 and a char arrived: process it as appropriate
+
+hadesc:	ex	de,hl
+	dec	(hl)		; reset state
+nowjp:	ld	a,c
+	ld	hl,esctbl	; get address of table
+	ld	b,{tblend - esctbl} / 3
+	call	ucsa		; force it upper case
+escscn:	ld	e,(hl)
+	inc	hl
+	ld	d,(hl)		; get jump address to de
+	inc	hl
+	cp	(hl)		; test for a match
+	inc	hl
+	push	de
+	ret	z		; got it: go and process
+	pop	de
+	djnz	escscn		; loop back & try again
+nowpop:	ld	a,c		; get char from c (again)
+	sub	'0'
+	cp	10		; check for '0' thru '9'
+	ret	nc		; didn't find it - give up
+	add	a,a
+	add	a,a
+	add	a,a
+	add	a,a		; * 16 gives table offset
+	ld	l,a
+	ld	h,0
+	ld	de,fktbl
+	add	hl,de		; index into table
+	ld	a,(hl)		; pick up
+	ld	(fkdely),a	; and save delay flag
+	inc	hl		; point at main string
+	ld	(fkptr),hl	; save string address
+	ret
+
+.dseg
+escstt:	db	0		; state of escape detection
+more:	db	0		; keyboard window code
+
+; V4.1e rev
+;
+; we now save ix and iy through all patch and bios calls: these entries
+; are used, and do all the work needed
+
+.cseg
+
+.macro	access	entry
+.extern	entry
+entry:
+	push	ix
+	push	iy
+	call	#`entry
+	pop	iy
+	pop	ix
+	ret
+.endm
+
+	access	kbdsts
+	access	scrout
+	access	modist
+	access	modin
+	access	modost
+	access	modout
+	access	sbreak
+	access	ebreak
+	access	dtroff
+	access	dtron
+	access	setbd
+	access	setmod
+	access	moveto
+
+.extern	kbdcc			; get a keyboard character if it's waiting
+kbdcc:
+	call	kbdsts
+	or	a
+	ret	z		; return 0 if nothing
+
+	access	kbdin
+
+.var	#bdos	5
+
+
+.extern	usrbds			; call bdos, but with a user switch
+usrbds:
+	push	bc		; save the function code
+	ld	a,(de)		; get the user number to switch to
+	inc	de		; point de at bdos's idea of the fcb
+	push	de		; save the address
+	ld	e,a
+	ld	c,gsuser
+	call	bdos		; set the user number
+	pop	de		; restore the fcb address
+	pop	bc		; and function number
+
+.extern	bdos
+bdos:
+	push	ix
+	push	iy
+	call	#bdos
+	pop	iy
+	pop	ix
+	ret
+
+.extern	#subchk
+#subchk:
+	ld	hl,(1)
+	ld	a,l
+	ld	de,3
+	xor	e
+	jr	nz,chngit
+	ld	l,a
+	ld	b,6
+jplp:	ld	a,(hl)
+	cp	0xc3
+	jr	nz,chngit
+	add	hl,de
+	djnz	jplp
+	ret
+chngit:	ld	hl,jptab
+	ld	de,0x0103
+	ld	bc,9
+	ldir
+	ret
+
+jptab:	jp	locst
+	jp	locin
+	jp	locout
+
+locst:	ld	hl,peekc
+	ld	a,(hl)
+.dseg
+peekc:	db	0
+.cseg
+	or	a
+	ret	nz
+	ld	c,6
+	ld	e,-1
+	push	hl
+	call	5
+	pop	hl
+	ld	(hl),a
+	or	a
+	ret
+
+locin:	call	locst
+	jr	z,locin
+	ld	(hl),0
+	ret
+
+locout:	res	7,c
+	ld	e,c
+	ld	c,6
+	jp	5
+

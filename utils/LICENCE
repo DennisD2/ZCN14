@@ -1,0 +1,9 @@
+Unless otherwise specified in the file, all source files in this
+directory should be treated as if they included this line:
+
+Copyright (C) 2022 Russell Marks. See `zcn.txt' for license details.
+
+The intent is for the files to be the usual GPL2-or-later. And for
+doing this to save me editing all of them.
+
+-Rus.

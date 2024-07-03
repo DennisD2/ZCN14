@@ -1,0 +1,25 @@
+* README for `support/zx0alt' directory
+
+The files in this directory are duplicates of those under the rest of
+the `support' directory generally, but using ZX0 format compression.
+They have not been thoroughly tested, but all should be fine to use.
+
+The advantage of using these is, obviously, the file size. Everything
+here is smaller than the original - as I tried most of them, then
+removed any which wouldn't be smaller on a ZCN drive.
+
+(The difference is particularly noticeable on programs written in
+high-level languages, those are mostly about half of the original
+size. For the others, it's more like two-thirds.)
+
+The disadvantages are that they may take longer to load, and any
+programs which you can ordinarily patch are no longer patchable in
+this form.
+
+The qterm.uue file is qterm.com as uuencoded, in case you want to use
+it with `rexec' when installing ZCN. This version's about 30% smaller.
+
+Credits for the ZX0 software used can be found under the top-level
+directory, in man/*zx0* and doc/zcn.txt.
+
+-Rus.

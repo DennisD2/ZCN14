@@ -1,0 +1,676 @@
+;nctest - simple NC model tester, also guesses if real or emulated.
+;Public domain by Russell Marks, 2022.
+;
+;This is mostly focused on differentiating between NC models, but also
+;does some tests which may indicate if you're using an emulator.
+;
+;This is written in such a way that it ought to also work under the
+;ROM OS from BBC Basic, but make sure that LOMEM is less than 32768.
+;(If it is, you'd want to do *LOAD nctest.com 8000 then CALL &8000.)
+
+;NB: You should not turn off the NC during the tests, as in at least
+;one case this could interfere with the result.
+
+
+org 08000h
+
+;test for ZCN
+ld a,(066h)
+cp 0f7h
+jp nz,start
+
+;better ZCN check
+ld c,128
+call 5
+inc a
+ret z
+
+;if on ZCN, copy the code up first.
+ld hl,0100h
+ld de,08000h
+ld bc,01000h	;good enough
+ldir
+;not re-entrant (ZCN)
+ld a,0c9h
+ld (0100h),a
+jp start
+
+start:
+;not re-entrant (ROM)
+ld a,0c9h
+ld (08000h),a
+
+;stack should be outside of 4000..7fffh area on both ROM and ZCN, so
+;no need to change SP.
+
+call tramsize
+call trombbc
+call trtctype
+call tfloat
+call tnc2uip
+
+call chkvotes
+
+ret
+
+
+;counters for "looks like this" results. (XXX realnc is currently unused)
+;nc100/nc150/nc200 must be together and in this order.
+nc100: defb 0
+nc150: defb 0
+nc200: defb 0
+realnc: defb 0
+emulator: defb 0
+
+
+;frequently need to stop interrupts and NMI -
+;this only kinda ignores NMI, but good enough.
+;Despite the name, this should work on ROM OS too.
+;Preserves all (normal) regs.
+zcnoff:
+di
+push af
+ld a,(066h)
+ld (old66op+1),a
+ld a,0c9h
+ld (066h),a
+pop af
+ret
+
+zcnon:
+push af
+old66op: ld a,0	;modified
+and a
+jr z,zcnonskp		;safety first - don't write if unmodified
+ld (066h),a		;(assumes it won't have been a nop)
+zcnonskp:
+xor a
+ld (old66op+1),a	;zero out again, for test above
+pop af
+ei
+ret
+
+
+tramsize:
+ld hl,mramsize
+call strprint
+
+;not a true RAM size test, just looks for more than 64k, and if found
+;calls it 128k. Feel free to fix it when an NC300 is released. :-)
+;
+;Set first byte of page 41h to 55h and AAh, checking against page 45h.
+
+call zcnoff
+
+ld hl,04000h
+ld de,055h
+ld b,2
+tramslp:
+ld a,041h
+call pagemem
+ld (hl),e
+ld a,045h
+call pagemem
+ld a,(hl)
+cp e
+jr z,trams1
+inc d
+trams1:
+ld a,e
+cpl
+ld e,a
+djnz tramslp
+
+ld a,041h
+call pagemem
+
+call zcnon
+
+;D=2 if it matched both times, implying 64k.
+ld a,d
+cp 2
+jr nz,trams2
+
+ld hl,mrams128
+call strprint
+ld hl,nc150
+inc (hl)
+ld hl,nc200
+inc (hl)
+ret
+
+trams2:
+ld hl,mrams64
+call strprint
+ld hl,nc100
+inc (hl)
+ret
+
+mramsize:	defb 'RAM size:       ',0
+mrams64:	defb '64k',13,10,0
+mrams128:	defb '128k',13,10,0
+
+
+;the ROM BBC Basic is a nice test because it always has the intro
+;banner text at offset 0056h in the page, and has either been at ROM
+;page 5 on NC100s, or 12 on everything else. The exception is my PD
+;ROM for nc100em, of course, hence checking both.
+trombbc:
+ld hl,mrombbc
+call strprint
+
+call zcnoff
+
+ld a,5
+call pagemem
+ld hl,(04056h)
+ld a,12
+call pagemem
+ld de,(04056h)
+ld a,041h
+call pagemem
+
+call zcnon
+
+ld bc,04242h	;BC=BB
+
+;check for both British and Broadcasting
+and a
+sbc hl,bc
+jr z,tromb1
+
+ex de,hl
+sbc hl,bc
+jr z,tromb2
+
+ld hl,mromb3
+call strprint
+ld hl,emulator
+inc (hl)
+ret
+
+tromb1:
+ld hl,mromb1
+call strprint
+ld hl,nc100
+inc (hl)
+ret
+
+tromb2:
+ld hl,mromb2
+call strprint
+ld hl,nc150
+inc (hl)
+ld hl,nc200
+inc (hl)
+ret
+
+mrombbc:	defb 'BBC Basic:      ',0
+mromb1:		defb 'ROM page 05',13,10,0
+mromb2:		defb 'ROM page 0C',13,10,0
+mromb3:		defb 'absent',13,10,0
+
+
+trtctype:
+ld hl,mrtctype
+call strprint
+
+;if port D0h has 9 in low nibble, wait two seconds (ish) for it to
+;change. If it doesn't, just carry on. This should mostly prevent time
+;(seconds) corruption on NC1x0 RTC during the actual test, without
+;causing issues if we're on NC200 or if the alarm page is selected.
+
+ld b,0		;potentially 2.56 secs
+trtclp:
+halt
+in a,(0d0h)
+and 15
+cp 9
+jr nz,trtc1
+djnz trtclp
+
+trtc1:
+;wait a bit longer in case any high seconds byte needs to carry. The
+;datasheet I've read for the TC8521 doesn't obviously seem to give
+;timings for how long an update takes, so I'll guess that half a
+;second seems like it should be plenty. This loop isn't a precise
+;half-second, but should be fine.
+
+ld b,60		;potentially 0.6 secs
+trtclp2:
+halt
+djnz trtclp2
+
+;if on ZCN, check the time. Once is good enough for this, as we
+;don't care about the time - just that the NC1x0 RTC page register is
+;set to either the time or alarm pages. ZCN doesn't touch the RTC
+;unless you ask it to, so it could have been left in any state (and on
+;NC150 and older NC100 ROM versions, it would get left on page 3 which
+;is neither time nor alarm). On NC200, the call is unnecessary but
+;harmless.
+;
+;It isn't ideal to do this *after* the above, but it should be a quick
+;enough call for it not to matter. This also reduces the chance that
+;an expertly-timed NMI poweroff breaks the result on ZCN, though this
+;is still theoretically possible on NC150 and older NC100 ROM
+;versions.
+
+ld a,(066h)
+cp 0f7h
+jr nz,trtc0
+
+ld c,133	;ZCN get time
+ld de,timebuf1
+call 5
+
+trtc0:
+call zcnoff
+
+;it is remarkably difficult to reliably test which RTC an NC has in a
+;way which doesn't corrupt the time on any NC, especially if you take
+;emulators into account which may not decode "unofficial" port numbers
+;as a real NC does.
+;
+;On NC1x0, ROM OS and ZCN will both (after the ZCN time-read above)
+;have RTC page register set to either 8 or 9 while the NC is on - the
+;time or alarm pages. In both cases, bit 3 of D1h is guaranteed to be
+;zero.
+;On NC200, with the correct setup, we can guarantee a one.
+;
+;NB: When I say "possibly corrupting" below, it should be very rare.
+;The wait for 9 to change above should hopefully mean it never happens.
+
+;NC1x0 - rewrite low seconds byte (possibly corrupting) of time/alarm
+;NC200 - select RAM location in 10-1fh range
+in a,(0d0h)
+and 15
+or 16
+out (0d0h),a
+
+;NC1x0 - rewrite high seconds byte (possibly corrupting) of time/alarm
+;NC200 - set bit 3 of RAM location
+in a,(0d1h)
+or 8
+out (0d1h),a
+
+;so now, bit 3 of IN should be zero on NC1x0 and one on NC200.
+in a,(0d1h)
+
+call zcnon
+
+and 8
+jr nz,trtc2
+
+;clearly an NC1x0...
+
+;...but no, it couldn't be that easy. nc100em 1.2 had a bug meaning it
+;would always return zero for reads from the spare RAM on the NC200
+;RTC, which makes it look like an NC1x0 to the above test. So to try
+;and exclude that, check for low nibble of port DDh being zero, which
+;it won't be on NC1x0, and will be on nc100em 1.2 in NC200 mode.
+in a,(0ddh)
+and 15
+jr z,trtc2
+
+ld hl,mrtc1
+call strprint
+ld hl,nc100
+inc (hl)
+ld hl,nc150
+inc (hl)
+ret
+
+trtc2:
+ld hl,mrtc2
+call strprint
+ld hl,nc200
+inc (hl)
+ret
+
+mrtctype:	defb 'RTC type:       ',0
+mrtc1:		defb 'TC8521',13,10,0
+mrtc2:		defb 'MC146818',13,10,0  ;(not a separate chip though)
+timebuf1:	defs 6
+
+
+tnc2uip:
+;check that the UIP flag is visible within two seconds or so.
+;It's only present on the NC200.
+
+;XXX this next bit currently checks for NC200 by checking ROM version
+;or seeing if zcn200.bin is running, but it might be preferable to
+;just use the result from the RTC test above.
+ld a,(066h)
+cp 0f7h
+jr z,tnc2u1
+
+;ROM OS
+call 0b8deh	;padgetversion
+ld de,200
+and a
+sbc hl,de
+ret c		;ret if ROM version not >=2.00
+jr tnc2u2
+
+tnc2u1:
+;ZCN
+ld c,144
+call 5
+and a
+ret nz		;only try it if running zcn200.bin
+
+tnc2u2:
+ld hl,mnc2uip
+call strprint
+
+call zcnoff
+
+;select register A
+;if we somehow get here on an NC100/NC150 (hopefully won't, see above)
+;this will corrupt RTC data, but in practice it should "only" be the
+;seconds setting of the time or alarm.
+ld a,0ah
+out (0d0h),a	
+
+ld h,4		;gives somewhat over two seconds
+tnc2ulp1:
+
+ld bc,0
+tnc2ulp2:
+in a,(0d1h)	;11
+rla		;4
+jp c,tnc2u3	;10
+dec bc		;6
+ld a,b		;4
+or c		;4
+jp nz,tnc2ulp2	;10
+
+dec h
+jp nz,tnc2ulp1
+
+call zcnon
+
+ld hl,mnc2ubad
+call strprint
+ld hl,emulator
+inc (hl)
+ret
+
+tnc2u3:
+call zcnon
+
+ld hl,mnc2uok
+call strprint
+ld hl,realnc
+inc (hl)
+ret
+
+mnc2uip:	defb 'NC200 RTC UIP:  ',0
+mnc2uok:	defb 'ok',13,10,0
+mnc2ubad:	defb 'no UIP',13,10,0
+
+
+tfloat:
+;check if bus seems to be floating or not;
+;port 00h is write-only, and should be floating on read.
+;(Confirmed test as working on real NC200, not tested NC100/NC150.)
+
+ld hl,mfloat
+call strprint
+
+;save an initial value
+in a,(0)
+ld e,a
+
+;this one should quickly be obvious, so one loop seems fine
+ld bc,0
+tfloatlp:
+in a,(0)
+cp e
+jr nz,tfltdiff
+dec bc
+ld a,b
+or c
+jp nz,tfloatlp
+
+ld hl,mfloatbad
+call strprint
+ld hl,emulator
+inc (hl)
+ret
+
+tfltdiff:
+ld hl,mfloatok
+call strprint
+ld hl,realnc
+inc (hl)
+ret
+
+mfloat:		defb 'Floating bus:   ',0
+mfloatok:	defb 'ok',13,10,0
+mfloatbad:	defb 'constant',13,10,0
+
+
+;check "votes" for NC100/NC150/NC200 and real/emulator.
+chkvotes:
+ld hl,mchkvotes
+call strprint
+
+;for NC100/150/200 highest wins.
+ld b,100
+ld a,(nc100)
+ld de,(nc150)
+cp e
+jr nc,chkv1
+ld b,150
+ld a,e
+chkv1:
+cp d	;(nc200)
+jr nc,chkv2
+ld b,200
+chkv2:
+ld e,b
+ld d,0
+call dispdec
+
+;for real/emulator, just test for non-zero emulator.
+ld a,(emulator)
+and a
+jr nz,chkvemu
+
+ld hl,mchkreal
+jp strprint	;ret via that
+
+chkvemu:
+ld hl,mchkemu
+jp strprint	;ret via that
+
+mchkvotes:	defb 13,10,'Seems to be NC',0
+mchkreal:	defb ' (real)',0
+mchkemu:	defb ' (emulated)',0
+
+
+
+
+;the rest is straight from nc100em's romdump.z
+
+
+;page in ROM/RAM page in A at 4000h-7fffh.
+;all regs preserved.
+pagemem:
+ld (0b001h),a	;needed on ROM OS and harmless on ZCN
+out (011h),a	;page in at 4000h-7fffh
+ret
+
+
+;print asciiz string at hl.
+;af/bc/de/hl corrupt
+strprint:
+ld a,(hl)
+and a
+ret z
+push hl
+call outchar
+pop hl
+inc hl
+jr strprint
+
+
+;output char in A
+;af/bc/de/hl corrupt
+outchar:
+ld e,a
+ld a,(066h)
+cp 0f7h
+ld a,e
+jp nz,0b833h	;ROM OS `txtoutput'
+
+ld c,2		;ZCN bconout
+jp 5
+
+
+;stuff from zcnlib (basically just dispdec bits)
+
+;divide
+;gives z1=x/y and z2=x mod y
+;entry: hl=x, de=y
+;exit:  hl=z1 (result), de=z2 (remainder)
+;af/bc corrupt
+;I've switched to a non-undocumented-opcode-using version, so
+; programs using it work under the Linux 'cpm' emulator. It's probably
+; about the same speed, anyway. And this version doesn't need ix,
+; which is handy.
+dividey: defw 0
+divide:
+ld b,h
+ld c,l
+;see if we're trying to divide by zero
+ld a,d
+or e
+ret z
+
+ld (dividey),de
+
+ld de,0
+ld hl,0
+ld a,16
+
+dvlp:
+push af
+and a
+rl l
+rl h
+
+and a
+rl e
+rl d
+
+bit 7,b
+jr z,dvs1
+
+ld a,1
+or l
+ld l,a
+
+dvs1:
+push hl
+and a
+push de
+ld de,(dividey)
+sbc hl,de
+pop de
+jp m,dvs2
+
+;nasty! fiddle the stack
+ex (sp),hl
+
+ld a,1
+or e
+ld e,a
+
+dvs2:
+pop hl
+
+and a
+rl c
+rl b
+
+pop af
+dec a
+jr nz,dvlp
+
+;finally! got the results.
+ex de,hl
+;exit: hl=result, de=remainder
+ret
+
+
+numtmp: defb '0000000000000000$'	;16 zeroes and '$'
+
+;convert number in de to ascii in internal buffer
+;entry: de=number
+;exit:  de=addr of number in internal buffer, '$' terminated
+itoa:
+ld b,10
+;FALLS THROUGH
+
+;call here for routine with functionality as above but with b=base
+
+;convert number in de to ascii, in given base (unsigned)
+;entry: de=number, b=base (from 2 to 36)
+;exit: af/bc/hl corrupt
+itoabase:
+ld hl,numtmp+16
+ld a,'$'
+ld (hl),a
+
+dispnlp:
+push bc
+push hl
+ex de,hl
+
+ld e,b
+ld d,0
+call divide
+
+ld a,e
+add a,48
+cp 58
+jr c,dispn1
+add a,7		;compensate for >=10
+dispn1:
+
+ex de,hl	;so de now is result of division
+pop hl
+pop bc
+dec hl
+ld (hl),a
+ld a,d
+or e
+jp nz,dispnlp
+
+ex de,hl
+ret
+
+
+;display number in de, in decimal
+dispdec:
+call itoa
+ld a,(066h)
+cp 0f7h
+ld c,9
+jp z,5		;output string if ZCN
+
+;ROM OS has a more sensible asciiz output function...
+xor a
+ld (numtmp+16),a
+ex de,hl	;needs addr in hl, not de
+jp 0b81eh
+
+
+;this crock is needed to stop ROM xmodem otherwise screwing last packet up
+;(or so I wrote in 2003 at any rate :-) - presumably it's needed if
+;you might otherwise have a ^Z in the last 128 bytes of the code, so
+;safety first...)
+defs 128
+defb 01ah

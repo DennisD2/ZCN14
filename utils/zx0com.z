@@ -1,0 +1,79 @@
+;zx0com - decompress .com in .zx0 format catted at end (with limits)
+;
+;Public domain by Russell Marks, 2022.
+
+;zx0 is keen on letting you know just what a tiny overlap you need to
+;allow :-) so why would decompression be limited here? Because I
+;wanted it to not need to know the size, so that you can just bung a
+;.com.zx0 on and it'll work. This causes... all the problems ever:
+;
+;- you have to copy a "good enough" input size
+;- you can't put it right at the top of the .com-and-.zx0 area
+;- you can't rely on zx0's reported overlap due to this
+;- so you need more memory, limiting the usable .com and .zx0 size
+;
+;With the defaults below, it's set to run ok on any version of ZCN,
+;and is limited to 16k .zx0 - and more than about 29k of original .com
+;size will get increasingly risky the larger you go.
+;
+;It's good enough for anything which comes with ZCN as-is.
+
+org 0100h
+
+bdosminpage	equ 0b9h	;a fair choice for ZCN, matches bbcbas
+
+;16k .zx0 means about 29k free at 0100h before any overlap could start,
+;which in practice should be fine for most non-pathological cases with
+;a .zx0 which fits in that space.
+zx0max		equ 16384
+
+dzx0loc		equ bdosminpage*256-256
+
+zx0dataloc	equ dzx0loc-zx0max
+
+
+
+start:
+;check there's enough memory
+ld a,(7)
+cp bdosminpage
+ret c		;nope
+
+;for page under bdos, stack grows down from top, dzx0 goes at bottom
+ld sp,bdosminpage*256
+
+ld hl,0		;ret = warm boot
+push hl
+ld h,1		;ret from dzx0 = jp 0100h
+push hl
+
+ld hl,0180h
+ld de,zx0dataloc
+ld bc,zx0max
+ldir
+
+ld hl,dzx0_start
+ld de,dzx0loc
+push de
+ld bc,dzx0_end-dzx0_start
+ldir
+
+ld hl,zx0dataloc
+ld de,0100h
+ret		;jump to dzx0, ret there will jp 0100h
+
+
+dzx0_start:
+
+phase dzx0loc
+
+;ZX0 decompression routine
+;just uses man's copy :-)
+include ../man/dzx0_standard.asm
+
+dephase
+
+dzx0_end:
+
+;zero-fill the record
+defs start+128-$

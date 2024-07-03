@@ -1,0 +1,15 @@
+NC200 boot floppy ramdisk contents
+
+
+     Name    Bytes   Recs  Attr     update             create
+------------ ------ ------ ---- -----------------  -----------------
+BBCMIN  .COM     3K     24    
+DCLOCK  .COM     1K      8    
+K       .COM     3K     19    
+LS      .COM     1K      8    
+QTERM   .COM    13K     97    
+TED200  .COM     7K     56    
+ZCSOLI  .COM     2K     16    
+7 Files occupying 30K, 15K Free.
+
+

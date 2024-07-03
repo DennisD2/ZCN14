@@ -1,0 +1,9 @@
+NAME
+	cls - clear the screen
+
+SYNOPSIS
+	cls
+
+DESCRIPTION
+	Clear the screen. (It clears the whole screen, including the
+	any unused pixel lines at the top and/or bottom.)

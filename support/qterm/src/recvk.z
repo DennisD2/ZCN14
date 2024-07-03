@@ -1,0 +1,259 @@
+; recvk.z - code to receive kermit protocol transfers
+
+.incl	"c:vars"
+.incl	"c:kermit"
+
+.extern	recvk
+recvk:
+	call	kinit
+	call	initrc
+	xor	a
+	ld	(nn),a
+	ld	(numtry),a
+	ld	(ksflg),a
+	ld	a,(getflg)
+	or	a
+	call	nz,sndget
+	ld	a,'R'
+recvlp:	ld	(state),a
+	cp	'R'
+	jr	nz,norr
+	call	rinit
+	jr	recvlp
+norr:	cp	'F'
+	jr	nz,norf
+	call	rfile
+	jr	recvlp
+norf:	cp	'D'
+	jr	nz,nord
+	call	rdata
+	jr	recvlp
+nord:	xor	'C'
+	ret
+
+rinit:
+	ld	hl,numtry
+	ld	a,(hl)
+	inc	(hl)
+	cp	MAXTRY + 1
+	jr	nc,reta
+	call	rpack
+	cp	'S'
+	jr	nz,noris
+	ld	a,(nn)
+	cp	c
+	jr	nz,retan
+	call	rpar
+	call	spar
+	call	pktok
+	ld	a,'Y'
+	ld	bc,(nn)
+	ld	de,13
+	ld	b,d
+	call	spack
+	ld	hl,numtry
+	ld	a,(hl)
+	ld	(oldtry),a
+	xor	a
+	ld	(hl),a
+	ld	(getflg),a
+	ld	hl,nn
+	inc	(hl)
+	res	6,(hl)
+	ld	a,(cktypq)
+	ld	(cktyp),a
+	ld	a,'F'
+	ret
+noris:	or	a
+	jr	nz,norif
+	call	dtime
+	ld	a,(getflg)
+	or	a
+	jr	z,rinak
+	call	sndget
+	jr	rierr
+rinak:	ld	bc,(nn)
+	ld	de,0
+	ld	b,e
+	ld	a,'N'
+sretst:	call	spack
+rierr:	call	pkterr
+	ld	a,(state)
+	ret
+norif:	cp	'E'
+	jr	nz,retab
+	call	prerrp
+	jr	reta
+retan:	call	dnum
+	jr	reta
+retab:	call	dbadp
+	jr	reta
+retar:	call	dtries
+reta:	ld	a,'A'
+	ret
+
+rfile:
+	ld	hl,numtry
+	ld	a,(hl)
+	inc	(hl)
+	cp	MAXTRY + 1
+	jr	nc,reta
+	call	rpack
+	cp	'S'
+	jr	nz,norfs
+	ld	hl,oldtry
+	ld	a,(hl)
+	inc	(hl)
+	cp	MAXTRY + 1
+	jr	nc,retar
+	ld	a,(nn)
+	dec	a
+	and	63
+	cp	c
+	jr	nz,retan
+	push	de
+	call	spar
+	pop	de
+	ld	de,13
+	ld	b,d
+cntsrs:	xor	a
+	ld	(numtry),a
+	ld	a,'Y'
+	jr	sretst
+norfs:	cp	'Z'
+	jr	nz,norfz
+	ld	hl,oldtry
+	ld	a,(hl)
+	inc	(hl)
+	cp	MAXTRY + 1
+retanc:	jr	nc,retar
+	ld	a,(nn)
+	dec	a
+	and	63
+	xor	c
+	jr	nz,retan
+	ld	e,a
+	ld	d,a
+	ld	b,a
+	jr	cntsrs
+norfz:	cp	'F'
+	jr	nz,norff
+	ld	a,(nn)
+	cp	c
+retanz:	jr	nz,retan
+	ld	hl,packet
+	ld	de,packet + 500
+	ld	a,(pack)
+	or	a
+	jr	z,nopkfn
+	call	exprp
+	ld	hl,packet + 500
+nopkfn:	call	cpmaux
+	xor	a
+	ld	(ymdmb),a
+	call	auxopn
+	ld	de,-1
+	ld	hl,auxfcb
+	call	prfile
+pokd:	call	pktok
+	ld	a,'Y'
+	ld	bc,(nn)
+	ld	de,0
+	ld	b,e
+	call	spack
+	ld	hl,numtry
+	ld	a,(hl)
+	ld	(oldtry),a
+	ld	(hl),0
+	ld	hl,nn
+	inc	(hl)
+	res	6,(hl)
+	ld	a,'D'
+	ret
+norff:	cp	'B'
+noris1:	jp	nz,noris
+	ld	a,(nn)
+	xor	c
+retnz1:	jr	nz,retanz
+	call	pktok
+	ld	a,'Y'
+	ld	bc,(nn)
+	ld	de,0
+	ld	b,e
+	call	spack
+	ld	a,'C'
+	ret
+
+rdata:
+	ld	hl,numtry
+	ld	a,(hl)
+	inc	(hl)
+	cp	MAXTRY + 1
+retnc1:	jp	nc,retar
+	call	rpack
+	cp	'D'
+	jr	nz,nordd
+	ld	a,(nn)
+	cp	c
+	jr	z,dnok
+ackold:	ld	hl,oldtry
+	ld	a,(hl)
+	inc	(hl)
+	cp	MAXTRY + 1
+	jr	nc,retnc1
+	ld	a,(nn)
+	dec	a
+	and	63
+	xor	c
+retnz2:	jr	nz,retnz1
+	ld	e,a
+	ld	d,a
+	ld	b,a
+	jp	cntsrs
+dnok:	call	bufemp
+	jp	pokd
+nordd:	cp	'F'
+	jr	z,ackold
+	cp	'Z'
+	jr	nz,noris1
+	ld	a,(nn)
+	cp	c
+	jr	nz,retnz2
+	call	flshw2
+	ld	de,auxfcb
+	ld	c,close
+	call	usrbds
+	call	pktok
+	ld	hl,nn
+	ld	c,(hl)
+	inc	(hl)
+	res	6,(hl)
+	ld	de,0
+	ld	b,e
+	ld	a,'Y'
+	call	spack
+	ld	a,'F'
+	ret
+
+sndget:	ld	bc,(getnam)
+ressg:	ld	hl,packet
+	ld	de,0xff
+sgelp:	ld	a,(bc)
+	inc	bc
+	ld	(hl),a
+	cp	':'
+	jr	z,ressg
+	cp	MYQUOTE
+	jr	nz,noquot
+	inc	hl
+	inc	e
+	ld	(hl),a
+noquot:	inc	hl
+	inc	e
+	or	a
+	jr	nz,sgelp
+	ld	b,d
+	ld	c,d
+	ld	a,'R'
+	jp	spack
+

@@ -1,0 +1,581 @@
+;man - man-style help command for ZCN, using ZX0-compressed LBR.
+;
+;Assembled this must stay under 3.5k due to loc of data (see equs)
+
+;All my code for man remains public domain, for consistency with
+;previous versions, so overall the ZX0 licence should apply - see
+;zx0-license.txt.
+
+;XXX this should probably do some CRC checking of the compressed
+;blocks, in case manpages.dat gets corrupted somehow, but that would
+;obviously slow it down.
+
+;XXX could maybe also do with an option to extract a single man page
+;to a file.
+
+
+org 0100h
+
+jr start
+
+bdos		equ 5
+
+bdprint		equ 9
+bfopen		equ 15
+bsetdma		equ 26
+bsetuser	equ 32
+bfrread		equ 33
+
+
+;18k buffer (16k plus a generous 2k overlap)
+;ZX0 compressed data is loaded at the end of this, and
+;decompresses to the start. The overlap saves having to worry
+;about keeping track of the "delta" result for each block, though
+;in practice it's far smaller (usually(/always?) less than ten bytes).
+;This is low in memory to lower the risk of the OS getting trashed if
+;manpages.dat gets corrupted - since bounds-checking does not
+;generally seem to be a thing for ZX0 decompression code. :-)
+
+bufaddr	equ 01000h	;leaves 3.5k for man.com, and 256-byte stack
+ubuflen	equ 16*1024	;length for uncompressed buffer only
+buflen	equ 18*1024	;full length, including the overlap
+
+;stack grows down from under the  buffer
+newstack equ bufaddr
+
+;at 5800h, the loaded man page itself. This is limited to ~22k, it will
+;simply be cut short if it's any bigger. Largest man page as of mid-2022
+;is under 10k.
+filedat	equ bufaddr+buflen
+
+;max recs read from .man file in LBR, just under 22k.
+;The "just under" is to allow a trailing ^Z to be added in all cases.
+maxrecs	equ 22*8-1
+
+;header record is read into normal DMA/command-line area.
+header	equ 080h
+
+;8k needed for line-pointers by view.z (reuses the decompression
+;buffer, which we're done with by then)
+lineptrs equ bufaddr
+maxlines equ 8192	;max no. of lines allowed by view.z
+
+;XXX the max-lines isn't checked currently - but you'd need thousands
+;of very short lines to have a problem, which in practice won't happen.
+
+
+outaddr: defw 0
+savuser: defb 0
+curblk:	defb 255
+
+
+datfcb:
+defb 1,'MANPAGESDAT'
+defs 4+16+1
+randrec:
+defb 0,0,0	;rand rec fields
+
+
+
+start:
+;might be re-entrant, but not risking it for now
+ld a,0c9h
+ld (0100h),a
+
+;requires zero page + 44k
+ld a,(7)
+cp 44*4+1	;i.e. B1xxh
+ret c
+
+ld sp,newstack
+ld hl,0
+push hl		;XXX could remove if not using ret
+
+;save old user and go to user 0
+ld e,255
+ld c,bsetuser	;actually set or get
+call bdos
+ld (savuser),a
+ld e,0
+ld c,bsetuser
+call bdos
+
+
+ld a,(05dh)
+cp 32
+jr nz,skip0
+
+;To quote ZX0's BSD 3-clause licence:
+;
+;"3. Neither the name of the copyright holder nor the names of its
+;   contributors may be used to endorse or promote products derived from
+;   this software without specific prior written permission."
+;
+;It seems to me that I can't name the authors at all, except for the
+;source-level instances in which they named themselves, lest I risk
+;any mention being seen as an endorsement or promotion. So I just
+;credit ZX0 itself.
+
+call ilprint
+
+defb 'ZCN man - main program PD by RJM, uses ZX0 compression'
+defb 13,10,13,10,'usage: man <page>   (try "man man" for help)',0
+jp exit
+
+skip0:
+;command name is in FCB from command line
+;make it asciiz
+xor a
+ld (05dh+8),a
+
+;open dat and read header
+call opendat
+
+;load block zero, to get at the LBR header
+xor a
+call loadcblk
+
+;force a status fail on the last entry, no matter what.
+;Assumes 256-entry directory.
+ld a,255
+ld (32*255+bufaddr),a
+
+;The important bits of a 32-byte LBR file entry for this:
+;
+;0	status (must be zero to indicate a file)
+;1	8.3 name
+;12	pos (in records)
+;14	len (in records)
+
+;look for man page.
+;The first entry isn't a file, so it's skipped.
+ld hl,bufaddr
+searchlp:
+ld de,32
+add hl,de
+
+;assuming the LBR was newly-made, any non-zero status presumably means
+;no more files in directory. It should in this case at least.
+ld a,(hl)
+and a
+jr z,slp1
+
+;So, couldn't find it.
+call ilprint
+defb 13,'No manual entry for ',0
+ld hl,05dh
+call strprint
+jp exit
+
+slp1:
+push hl
+inc hl
+push hl
+ld de,8
+add hl,de
+ld (hl),0	;make pre-ext filename part asciiz
+pop hl
+ld de,05dh
+call strcmp
+pop hl
+jr nc,searchlp
+
+;ok, got a match
+push hl
+call ilprint
+defb 'Reading man page, please wait...',0
+pop hl
+
+;got match, HL points to entry.
+ld de,filedat
+ld (outaddr),de
+
+;get pos and len
+ld de,12
+add hl,de
+ld e,(hl)
+inc hl
+ld d,(hl)
+inc hl
+ld c,(hl)
+inc hl
+ld b,(hl)
+
+;now DE is pos and BC is len, both in records.
+;Our 16k blocks are each 128 records long (when uncompressed).
+;So the pos needs to be split into block number=pos/128 and
+;and byte addr=bufaddr+((pos&127)*128).
+
+ld a,e
+and 127
+ld h,a
+ld l,0
+srl h
+rr l		;*128
+push de
+ld de,bufaddr
+add hl,de
+pop de
+
+ld a,d		;/256
+rl e		;nc from the add above
+rla		;/128 (losing top bit)
+ld e,a		;keep it in just E
+
+;so E=block number, HL=byte addr., BC=len in records
+;now copy 128 bytes at a time, calling loadcblk before each.
+;if HL reaches bufaddr+ubuflen, E++ and HL=bufaddr.
+
+;if BC is >=maxrecs, cap it there. Assumed to be <256.
+ld a,b
+and a
+jr z,gmskip
+;if BC>=256, just set BC to max.
+ld bc,maxrecs
+jr getmanlp
+gmskip:
+;otherwise, limit on C.
+ld a,c
+cp maxrecs
+jr c,getmanlp
+ld c,maxrecs
+
+getmanlp:
+push bc
+push de
+push hl
+
+ld a,e
+call loadcblk	;will quickly ret if current
+
+pop hl
+push hl
+
+;copy a record
+ld de,(outaddr)
+ld bc,128
+ldir
+ld (outaddr),de
+
+pop hl
+ld de,128
+add hl,de
+ex de,hl
+ld hl,bufaddr+ubuflen
+sbc hl,de	;nc from add
+ex de,hl
+pop de
+pop bc
+jr nz,getman1
+ld hl,bufaddr
+inc e
+getman1:
+
+dec bc
+ld a,b
+or c
+jr nz,getmanlp
+
+;ok, man page loaded in at filedat.
+;Now put ^Z at the end, it might not have one!
+ld hl,(outaddr)
+ld (hl),26
+
+;view it
+call view
+
+;falls through
+
+exit:
+;restore original user no.
+ld a,(savuser)
+ld e,a
+ld c,bsetuser
+call bdos
+rst 0
+
+
+;open manpages.dat for reading, and read the first
+;record into header area. Will exit on error.
+opendat:
+;reset current loaded block
+ld a,255
+ld (curblk),a
+
+ld de,datfcb
+ld c,bfopen
+push de
+call bdos
+pop de
+inc a
+jr z,readfail
+
+;only uses random-read as we use it elsewhere
+ld hl,0
+ld (randrec),hl
+ld c,bfrread
+call bdos
+and a
+ret z
+
+;falls through on error
+
+readfail:
+;this is used generally, so a pretty generic error
+call ilprint
+defb 'man: error reading manpages.dat.',0
+jp exit
+
+
+;load compressed block no. A right at top of bufaddr area,
+;then decompress it to fill (most of) the buffer.
+loadcblk:
+;don't load again if it's already in place
+ld hl,curblk
+cp (hl)
+ret z
+
+ld (hl),a
+
+;get length
+rlca
+rlca
+rlca		;*8
+ld e,a
+ld d,0
+ld hl,header
+add hl,de
+;hl points to first 4-byte hex
+call hw2bin
+;hl points to next 4-byte hex
+push de
+call hw2bin
+push de
+
+;de is length in records - work out where to put the output
+ld hl,bufaddr+buflen
+ld d,e
+ld e,0
+srl d
+rr e		;*128, assuming compressed block size <32k
+and a
+sbc hl,de
+
+pop bc
+pop de
+
+inc de		;allow for header record
+
+;so now:
+;- hl is address to start loading from
+;- de is file offset in records
+;- bc is length in records
+
+push hl		;save load addr for later
+
+;use random-read to read input
+lcblp:
+ld (randrec),de
+push bc
+push de
+push hl
+ex de,hl
+ld c,bsetdma
+call bdos
+
+ld de,datfcb
+ld c,bfrread
+call bdos
+and a
+jp nz,readfail	;quit on error
+
+pop hl
+ld de,128
+add hl,de	;next record in buffer
+pop de
+pop bc
+
+inc de		;next record in file
+dec bc
+ld a,b
+or c
+jr nz,lcblp
+
+pop hl		;restore load addr
+
+;ret via decompression routine
+ld de,bufaddr
+jp dzx0_standard
+
+
+;hex word to binary
+;entry:	HL points to 4-byte hex string
+;exit:	DE=binary, HL+=4
+;(based on p3c80's tapbin.z)
+hw2bin:
+ld de,0
+ld b,4
+hexitlp:
+ld a,(hl)
+cp 'A'
+jr c,hexit1
+sub 7
+hexit1:
+sub '0'
+;move to high nibble
+rlca
+rlca
+rlca
+rlca
+;roll off into low end of DE
+;(as first hexit is most significant)
+rla
+rl e
+rl d
+rla
+rl e
+rl d
+rla
+rl e
+rl d
+rla
+rl e
+rl d
+inc hl
+djnz hexitlp
+ret
+
+
+;viewer code
+include view.z
+
+;viewer code needs this
+include ../zcnlib/maths.z
+
+;ZX0 decompression routine
+include dzx0_standard.asm
+
+
+;stuff from zcnlib, included here to save space
+
+;putchar - put char in a
+;puts CR before any LF output
+;f corrupt, others preserved
+putchar:
+cp 10
+jr nz,putbyte
+ld a,13
+call putbyte
+ld a,10
+;FALLS THROUGH
+
+;putbyte - put char in a without translation
+;preserves all regs
+putbyte:
+push af
+push bc
+push de
+push hl
+ld e,a
+ld c,2
+call 5
+pop hl
+pop de
+pop bc
+pop af
+ret
+
+
+;getchar - get char into a (without echo)
+;preserves all but f
+getch:		;same
+getchar:
+push bc
+push de
+push hl
+getchlp:
+call kbhit
+jr nc,getchlp
+ld e,0ffh
+ld c,6
+call 5
+pop hl
+pop de
+pop bc
+ret
+
+
+;kbhit - like the common DOS C function
+;returns c if key pressed, nc if not
+kbhit:
+ld c,11
+call 5
+rra
+ret
+
+
+
+;compare strings at hl and de
+;NB: unlike the C function, this only tests for equality
+;entry:	hl=string1, de=string2
+;exit:	c if they match, nc otherwise
+;af/de/hl corrupt
+strcmp:
+ld a,(de)
+cp (hl)
+jr nz,strcmp2
+and a
+jr z,strcmp1
+inc hl
+inc de
+jr strcmp
+
+strcmp1:
+;they matched ok
+scf
+ret
+
+strcmp2:
+;they didn't match
+and a	;no carry
+ret
+
+
+;strprint - print asciiz at hl
+;entry:	hl=addr of string
+;exit:	none
+;af/hl corrupt
+strprint:
+ld a,(hl)
+and a
+ret z
+call putchar
+inc hl
+jr strprint
+
+
+;ilprint - print inline text. text must be asciiz.
+; useful for keeping messages at the right place in the program.
+;entry:	none
+;exit:	none
+;af/de/hl corrupt
+;
+;to use, do something like:
+; call ilprint
+; defb 'Hello world',0
+;
+;this is lifted straight from (an old version of) ZCN's misc.z.
+;
+ilprint:
+ex (sp),hl
+ilploop:
+ld a,(hl)
+and a
+jr z,ilpstop
+call putchar
+inc hl
+jr ilploop
+ilpstop:
+pop de
+inc hl
+jp (hl)

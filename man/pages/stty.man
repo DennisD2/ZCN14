@@ -1,0 +1,15 @@
+NAME
+	stty - set speed used by serial port
+
+SYNOPSIS
+	stty speed
+
+DESCRIPTION
+	Set speed (in bits per second) used by serial port. Supported
+	speeds are 150, 300, 600, 1200, 2400, 4800, 9600, and 19200.
+	ZCN's default speed is 2400 bps.
+
+BUGS
+	See last sentence above. :-) It might in theory be sensible,
+	but it's very slow. Generally you'd have an stty command in
+	your `autoexec.sub' to set the speed to 9600 or 19200.

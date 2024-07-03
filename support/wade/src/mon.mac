@@ -1,0 +1,485 @@
+.z80
+;
+	cseg
+	include	PRINTF.LIB
+;
+siodata	equ	14h
+sioctl	equ	16h
+tbe	equ	4
+rca	equ	1
+;
+fcb	equ	5ch
+fcb2	equ	6ch
+;
+main::
+	ld	sp,stack
+	di
+	ld	a,1
+	out	(sioctl),a
+	ld	a,4
+	out	(sioctl),a
+	ei
+skipp:
+	in	a,(sioctl)
+	and	rca
+	jr	z,wait0
+	in	a,(siodata)
+	jr	skipp
+;
+wait0:
+	ld	a,1fh
+	out	(siodata),a
+	ld	hl,07fffh
+wait1:
+	in	a,(sioctl)
+	and	rca
+	jr	nz,waitend
+	dec	hl
+	ld	a,h
+	or	l
+	jr	nz,wait1
+	printf	'Waiting ... '
+;
+wait2:
+	in	a,(sioctl)
+	and	rca
+	jr	nz,waitend
+	ld	e,0ffh
+	ld	c,6
+	call	5
+	cp	3
+	jp	z,0
+	jr	wait2
+;
+waitend:
+	in	a,(siodata)
+	and	7fh
+	push	af
+	ld	e,a
+	ld	c,6
+	call	5
+	pop	af
+	cp	7
+	jr	z,ready
+	cp	':'
+	jr	z,ready
+	ld	a,1
+	out	(siodata),a
+	jr	wait2
+;
+ready:
+	ld	a,1
+	out	(siodata),a
+;
+	ld	a,(fcb+1)
+	cp	' '
+	jr	z,nofn
+	ld	a,(fcb2+1)
+	cp	' '
+	jr	z,nosymfn
+	ld	hl,fcb2
+	ld	de,symfcb
+	ld	bc,32
+	ldir
+	call	symbols
+nosymfn::
+	call	read
+nofn::	
+	printf	'OK\n:'
+;
+loop::
+	ld	sp,stack
+	call	pollsio
+	call	pollcon
+	jr	loop
+;
+pollcon::
+	ld	c,6
+	ld	e,0ffh
+	call	5
+	or	a
+	ret	z
+	cp	3
+	jp	z,0
+	cp	'R'-'@'
+	jp	z,read
+	cp	'W'-'@'
+	jp	z,write
+	cp	'F'-'@'
+	jp	z,file
+	cp	'N'-'@'
+	jp	z,symfile
+	cp	'S'-'@'
+	jp	z,symbols
+	ld	b,a
+;
+wtout::
+	in	a,(sioctl)
+	and	tbe
+	jr	z,wtout
+	ld	a,b
+	out	(siodata),a
+	ret
+;
+pollsio::
+	in	a,(sioctl)
+	and	rca
+	ret	z
+	in	a,(siodata)
+	and	7fh
+gotsio::
+	ld	e,a
+	ld	c,6
+	call	5
+	ld	a,1
+	out	(siodata),a
+	ret
+;
+symfile::
+	ld	hl,symfcb
+	ld	(pfcb+2),hl
+	printf	'\nSymbol '
+	jr	fileinp
+;
+file::
+	ld	hl,fcb
+	ld	(pfcb+2),hl
+	printf	'\n'
+fileinp::
+	printf	'Filename: '
+	ld	de,inbuf
+	ld	c,10
+	call	5
+	printf	'\n:'
+	ld	hl,inbuf+1
+	ld	a,(hl)
+	or	a
+	ret	z
+	ld	e,a
+	ld	d,0
+	add	hl,de
+	inc	hl
+	ld	(hl),0
+	ld	c,152
+	ld	de,pfcb
+	call	5
+	inc	hl
+	ld	a,h
+	or	l
+	ret	nz
+	printf	'Filename fehlerhaft!\n:'
+	ret
+;
+pfcb::	dw	inbuf+2
+	dw	fcb
+;
+inbuf::	db	80,0
+	ds	80
+;
+write::
+	ld	a,(fcb+1)
+	cp	' '
+	jp	z,nofile
+	ld	de,fcb
+	ld	c,19
+	call	5
+	xor	a
+	ld	(fcb+12),a
+	ld	(fcb+32),a
+	ld	de,fcb
+	ld	c,22
+	call	5
+	inc	a
+	jr	nz,wrok
+	printf	'\nMake Error\n:'
+	jp	loop
+;
+wrok::
+	xor	a
+	ld	(fcb+32),a
+	printf	'Writing '
+	ld	hl,8000h
+	ld	b,0
+wrloop::
+	printf	'%@w\h\h\h\h',HL
+	push	bc
+	ld	b,5
+	call	wrfunc
+	ld	c,l
+	call	wrbyte
+	ld	c,h
+	call	wrbyte
+	push	hl
+	ld	hl,80h
+	ld	b,128
+wrblock::	
+	in	a,(sioctl)
+	and	rca
+	jr	z,wrblock
+	in	a,(siodata)
+	ld	(hl),a
+	inc	hl
+	ld	a,1
+	out	(siodata),a
+	djnz	wrblock
+;
+	ld	de,fcb
+	ld	c,21
+	call	5
+	or	a
+	jr	nz,wrerr
+	pop	hl
+	ld	de,128
+	add	hl,de
+	pop	bc
+	djnz	wrloop
+;
+	ld	de,fcb
+	ld	c,16
+	call	5
+	or	a
+	jr	nz,closerr
+	printf	'\nReady\n:'
+	ret
+;
+wrerr::
+	printf	'Write Error\n:'
+	jp	loop
+;
+closerr::
+	printf	'Close Error\n:'
+	jp	loop
+;
+wrbyte::
+	in	a,(sioctl)
+	and	tbe
+	jr	z,wrbyte
+	ld	a,c
+	out	(siodata),a
+	ret
+;
+wrfunc::
+	push	hl
+	call	wtout
+	ld	hl,07fffh
+wfecho::
+	in	a,(sioctl)
+	and	rca
+	jr	nz,wgotecho
+	dec	hl
+	ld	a,h
+	or	l
+	jr	nz,wfecho
+	pop	hl
+	printf	'WF Timeout\n'
+	jp	loop
+;
+wgotecho::
+	pop	hl
+	in	a,(siodata)
+	and	7fh
+	cp	2
+	ret	z
+	printf	'WF rcv err %@x',A
+	jp	loop
+;
+nofile::
+	printf	'\nNo Filename\n:'
+	jp	loop
+;
+nosymfile::
+	printf	'\nNo Symbol Filename\n:'
+	jp	loop
+;
+read::
+	ld	a,(fcb+1)
+	cp	' '
+	jp	z,nofile
+	xor	a
+	ld	(fcb+12),a
+	ld	(fcb+32),a
+	ld	de,fcb
+	ld	c,15
+	call	5
+	inc	a
+	jp	nz,rdok
+	printf	'File not found\n:'
+	jp	loop
+;
+rdok::
+	xor	a
+	ld	(fcb+32),a
+	printf	'Reading '
+	ld	hl,8000h
+rdloop::
+	push	hl
+	ld	de,fcb
+	ld	c,20
+	call	5
+	or	a
+	jr	nz,rdend
+	pop	hl
+	printf	'%@w\h\h\h\h',HL
+	ld	b,4
+	call	wrfunc
+	ld	c,l
+	call	wrbyte
+	ld	c,h
+	call	wrbyte
+	push	hl
+	ld	hl,80h
+	ld	b,128
+rdblock::	
+	in	a,(sioctl)
+	and	tbe
+	jr	z,rdblock
+	ld	a,(hl)
+	out	(siodata),a
+	inc	hl
+	djnz	rdblock
+;
+	pop	hl
+	ld	de,128
+	add	hl,de
+	jr	rdloop
+;
+rdend::
+	pop	hl
+	ld	de,fcb
+	ld	c,16
+	call	5
+	printf	'\nReady\n:'
+	ret
+;
+;
+symbols::
+	ld	a,(symfcb+1)
+	cp	' '
+	jp	z,nosymfile
+	xor	a
+	ld	(symfcb+12),a
+	ld	(symfcb+32),a
+	ld	de,symfcb
+	ld	c,15
+	call	5
+	inc	a
+	jp	nz,symok
+	printf	'Symbol File not found\n:'
+	jp	loop
+;
+symok::
+	xor	a
+	ld	(symfcb+32),a
+	printf	'Loading Symbols ...'
+	ld	de,symbuf+2
+;
+symloop::
+	push	de
+	ld	de,symfcb
+	ld	c,20
+	call	5
+	pop	de
+	or	a
+	jr	nz,symrdy
+	ld	hl,80h
+	ld	b,128
+;
+symxfer::
+	ld	a,(hl)
+	cp	1ah
+	jr	z,symrdy
+	cp	0ah
+	call	nz,symwr
+	inc	hl
+	djnz	symxfer
+	jr	symloop
+;
+symrdy::
+	ld	a,0dh
+	call	symwr
+	ld	de,symfcb
+	ld	c,16
+	call	5
+	printf	' Ready\n:'
+	ret
+;
+symwr::
+	ld	(de),a
+	inc	de
+	cp	0dh
+	jr	z,putsym
+	cp	9
+	jr	z,putsym
+	ret
+;
+putsym::
+	dec	de
+	ld	a,0dh
+	ld	(de),a
+	push	hl
+	ld	hl,symbuf+3
+	or	a
+	sbc	hl,de
+	ld	hl,symbuf
+	jr	nz,putlp
+	pop	hl
+	ret
+;
+putlp::
+	ld	a,(hl)
+	push	af
+	call	outsym
+	inc	hl
+	pop	af
+	cp	0dh
+	jr	nz,putlp
+	pop	hl
+putw1::
+	in	a,(sioctl)
+	and	rca
+	jr	z,putw1
+	in	a,(siodata)
+	push	af
+	ld	a,1
+	out	(siodata),a
+	pop	af
+	and	7fh
+;	call	diss
+	cp	':'
+	jr	nz,putw1
+;
+	ld	de,symbuf+2
+	ret
+;
+outsym::
+	push	af
+symw1::
+	in	a,(sioctl)
+	and	tbe
+	jr	z,symw1
+	pop	af
+	out	(siodata),a
+symw2::
+	in	a,(sioctl)
+	and	rca
+	jr	z,symw2
+	in	a,(siodata)
+;	call	diss
+symw3::
+	in	a,(sioctl)
+	and	tbe
+	jr	z,symw3
+	ld	a,1
+	out	(siodata),a
+	ret
+;
+symfcb::
+	ds	36
+;
+symbuf::	db	'N0'
+	ds	80
+;
+	ds	100
+stack::
+	end	main
+

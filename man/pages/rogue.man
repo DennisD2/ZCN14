@@ -1,0 +1,58 @@
+NAME
+	rogue - exploring The Dungeons of Doom
+
+SYNOPSIS
+	rogue [save_file]
+
+DESCRIPTION
+	Rogue is a screen-oriented computer fantasy game. The object
+	of the game is to survive the attacks of various monsters and
+	get a lot of gold, rather than the puzzle solving orientation
+	of most computer fantasy games.
+
+	To get started you really only need to know two commands. The
+	command `?' will give you a list of the available commands and
+	the command `/' will identify the things you see on the
+	screen.
+
+	To win the game (as opposed to merely playing to beat other
+	people's high scores) you must locate the Amulet of Funidoog
+	which is somewhere below the 20th level of the dungeon and get
+	it out. Nobody has achieved this yet and if somebody does,
+	they will probably go down in history as a hero among heroes.
+
+	When the game ends, either by your death, when you quit, or if
+	you (by some miracle) manage to win, rogue will give you your
+	score, based entirely upon how much gold you get. There is a
+	10% penalty for getting yourself killed.
+
+OPTIONS
+	save_file	if specified, a saved game file to be
+			restored.
+
+FILES
+	rogue.sav - default save file
+
+BUGS
+	It can be a bit confusing to play on the NC100/150, due to the
+	squashed and halved screen.
+
+	On the NC200, if you turn off then on again, you must trigger
+	a display update to return to the game screen. Usually "." or
+	Space will do this.
+
+AUTHORS
+	BSD version: Timothy Stoehr, Michael C. Toy, Kenneth C. R. C.
+	Arnold, Glenn Wichman
+
+	CP/M port: David Goodenough
+
+	ZCN adaptation: Russell Marks
+
+	This man page is based on rogue(6) from 4.4BSD (see licence in
+	ZCN's support/rogue/guide.txt).
+
+SEE ALSO
+	Michael C. Toy and Kenneth C. R. C. Arnold, "A guide to the
+	Dungeons of Doom" (adapted version in ZCN distribution as
+	support/rogue/guide.txt; it gives much fuller instructions)

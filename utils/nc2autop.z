@@ -1,0 +1,268 @@
+;nc2autop.z is based on:
+;
+;FUZIX NC200 autoprg.s
+;Copyright (C) 2017 David Given
+;
+;This program is free software; you can redistribute it and/or modify
+;it under the terms of the GNU General Public License as published by
+;the Free Software Foundation; either version 2 of the License, or (at
+;your option) any later version.
+;
+;This program is distributed in the hope that it will be useful, but
+;WITHOUT ANY WARRANTY; without even the implied warranty of
+;MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+;General Public License for more details.
+;
+;You should have received a copy of the GNU General Public License
+;along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+;[The GNU GPL is in the file `../COPYING'.]
+
+
+;This is a slightly modified version of FUZIX's autoprg.s, written by
+;David Given who figured out the NC200's weird floppy booting scheme
+;(and cluster bug).
+;
+;This is almost verbatim from FUZIX, it's just ported to zmac syntax
+;with the very tiniest of tweaks. A really nice loader, much better
+;than I'd have done :-) though it does have to make some hefty
+;assumptions about where routines are in the ROM. I know that feeling.
+;
+;FWIW though, I've never known an NC200 not to have ROM v2.01, and I
+;doubt they sold well enough to get many ROM updates.
+
+
+; This is a simple bootstrap loader which uses the Amstrad's built-in software to
+; load files off disk. It first searches for LOAD????.?? files, where the first
+; field is a hex address and the second is a bank ID, and loads them all. Then it
+; searches for a CALL????.?? file, pages in the bank, and calls that address.
+; The paged in bank is always at 0x4000. Typically you'll want something like:
+;
+;   LOAD4000.80
+;   LOAD4000.81
+;   CALL4000.80
+;
+; If there are multiple CALL????.?? files, it will pick one at random and ignore
+; the rest.
+
+org 0a000h
+
+; Amstrad kernel entrypoints (as named in nciospec.doc)
+
+kmreadchar equ 0b9b3h
+textout equ 0b81eh
+txtclearwindow equ 0b824h
+txtoutput equ 0b833h
+
+; Ranger FDD entrypoints. I have no idea whether these are consistent between ROM
+; versions, if there are different ROM versions, but I've found at least two
+; machines with these values. Unfortunately the Ranger software doesn't expose
+; things like read_sector via a system call.
+
+;these are accessible via the jump table...
+r_set_dta	equ 0c012h
+r_find_first	equ 0c015h
+r_find_next	equ 0c018h
+r_finish	equ 0c030h
+
+;...these, not so much
+load_sectors_to_4000		equ 0e884h
+print_hex_i8			equ 0cb0eh
+press_any_key			equ 0cb50h
+advance_to_next_cluster		equ 0d8cah
+read_sector			equ 0dffeh
+calculate_location_of_cluster	equ 0da57h
+update_watchdog_timer		equ 0cc78h
+
+;XXX would it be better to set our own?
+;Bit odd to have r_set_dta then not use it.
+dta		equ 0b7f1h
+
+    ; On entry, the memory map is as follows:
+    ;
+    ; 0x0000-0x3fff: Kernel workspace
+    ; 0x4000-0x7ccc: Dedicated 16kB bank for us
+    ; 0x8000-0xbfff: Kernel workspace
+    ; 0xc000-0xffff: Ranger floppy disk routines
+    ;
+    ; The only bank we can change while still keeping the Amstrad kernel running
+    ; is the one at 0x4000. So we need to relocate ourself into the transient
+    ; data area at 0xa000 to allow this. This is 4kB wide.
+
+entry:
+    ld de, 0a000h
+    ld hl, 04000h
+    ld bc, 01000h
+    ldir
+    jp start
+start:
+    ld (entry_stack), sp
+    call txtclearwindow
+    ld hl, hello
+    call textout
+
+    ld hl, load_pattern
+    ld a, 0ffh
+    call r_find_first
+filename_loop:
+    jp c, failed
+
+    ld hl, (dta)
+    call textout
+    ld a, ' '
+    call txtoutput
+    call parse_filename
+    call load_file
+
+    call r_find_next
+    jr filename_loop
+
+failed:
+    cp 012h ; ran out of files?
+    jr z, finished
+    ; Otherwise it's a hard error.
+really_failed:
+    push af
+    ld hl, error
+    call textout
+    pop af
+    call print_hex_i8
+press_any_key_and_exit:
+    call press_any_key
+exit:
+    ld sp, (entry_stack)
+    ret
+
+finished:
+    ld a, (found_a_file)
+    or a
+    jr z, no_bank_files
+
+    ld hl, call_pattern
+    ld a, 0ffh
+    call r_find_first
+    jr c, no_boot_file
+    call parse_filename
+
+    push af
+    ld hl, booting
+    call textout
+    pop af
+    call print_hex_i8
+
+    call r_finish
+    ld sp, (entry_stack)
+    ld hl, (destination)
+    jp (hl)
+
+no_bank_files:
+    ld hl, mno_bank_files
+textout_and_exit:
+    call textout
+    jr press_any_key_and_exit
+no_boot_file:
+    ld hl, mno_boot_file
+    jr textout_and_exit
+
+nl:
+    ld hl, mnl
+    jp textout
+
+; Assumes that the dta contains a dirent for a file and that destination
+; is set correctly; reads it all in.
+load_file:
+    ld a, 1
+    ld (found_a_file), a
+
+    ld iy, (dta)
+    ld l, (iy+01ch) ; start cluster in dirent
+    ld h, (iy+01dh)
+cluster_loop:
+    push hl
+    call calculate_location_of_cluster
+    ld (ix+018h), a ; track
+    ld (ix+01ah), l ; sector
+
+    ld hl, (destination)
+    call read_sector
+    jr c, really_failed
+    call update_watchdog_timer
+
+    inc (ix+01ah)
+
+    ld hl, (destination)
+    ld de, 0200h
+    add hl, de
+    ld (destination), hl
+    call read_sector
+    jp c, really_failed
+    call update_watchdog_timer
+
+    ld hl, (destination)
+    ld de, 0200h
+    add hl, de
+    ld (destination), hl
+    
+    ld a, '.'
+    call txtoutput
+
+    pop hl
+    call advance_to_next_cluster
+    jr nc, cluster_loop
+    jp nl
+
+; Assumes that the dta contains the dirent for the current file.
+parse_filename:
+    ld iy, (dta)
+
+    ld d, (iy+6)
+    ld e, (iy+7)
+    call parse_hex
+    ld (destination+0), a
+
+    ld d, (iy+4)
+    ld e, (iy+5)
+    call parse_hex
+    ld (destination+1), a
+
+    ld d, (iy+9)
+    ld e, (iy+10)
+    call parse_hex
+    ld (0b001h), a ; tell the OS that we're changing banks
+    out (011h), a  ; actually change banks
+    ret
+
+; Takes a hex number in D, E and reads it into A.
+parse_hex:
+    ld a,d
+    call parse_hex_digit
+    add a,a
+    add a,a
+    add a,a
+    add a,a
+    ld d,a
+    ld a,e
+    call parse_hex_digit
+    or d
+    ret
+
+parse_hex_digit:
+    sub '0'
+    cp 10
+    ret c
+    sub 'A'-'0'-10
+    ret
+
+entry_stack:   defw 0
+found_a_file:  defb 0
+destination:   defw 0
+
+hello:         defb "Loading..." ; falls through
+mnl:           defb 13,10,0
+
+mno_bank_files: defb "No files to load!",0
+mno_boot_file: defb "No boot configuration!",0
+load_pattern:  defb "LOAD????.??",0
+call_pattern:  defb "CALL????.??",0
+error:         defb 13,10,"Error: ",0
+booting:       defb "Starting bank ",0

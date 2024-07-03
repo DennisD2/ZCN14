@@ -1,0 +1,20 @@
+NAME
+	games - the games which come with ZCN
+
+SYNOPSIS
+	List of games
+
+DESCRIPTION
+	Several games come with ZCN. All have man pages, which you
+	should look up for more info on each:
+
+	bs		battleships
+	chess		er, a chess game :-)
+	cpmtris		a puzzle game
+	fish		the card game "Go Fish"
+	invaders	invisible invaders, possibly from space
+	rogue		"a screen-oriented computer fantasy game"
+	zcsoli		Solitaire/Patience/Klondike card game
+
+SEE ALSO
+	zcn

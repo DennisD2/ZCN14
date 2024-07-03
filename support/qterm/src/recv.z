@@ -1,0 +1,77 @@
+; recv.z - protocol receive code for qterm
+
+.incl	"c:vars"
+
+.extern	recv
+recv:
+	call	pmode
+	jr	z,modok
+	cp	'x'
+	jp	nz,moderr	; k & x are the only legal modes (for now)
+modok:	inc	hl
+	push	hl		; save pointer
+	push	af		; and mode character
+	call	unbyp		; step over flags
+	call	scnfcb		; parse name (or drive only for batch)
+	ld	hl,(fcb)
+	ld	(newusr),hl	; save receive drive and user
+	pop	bc
+	pop	hl
+	jp	z,nowcp
+	push	bc
+	push	hl
+	call	reset		; do a reset
+	pop	hl
+	pop	bc
+	ld	a,'k'
+	cp	b		; Kermit or Xmodem
+	jr	nz,recvx
+	call	recvk		; receive kermit
+	jr	xferd		; and unwrap
+recvx:	call	xmflgs		; parse xmodem flags
+	call	initx
+	call	initrc		; set up screen
+dorecv:	call	xrfile		; receive a file
+	or	a
+	jr	nz,dorecv	; loop if more to come
+	ld	a,(errorf)
+	or	a		; flag if there was an error or not
+
+.extern	xferd			; finish transfer - print completion message
+xferd:
+	push	af		; save z flag
+	ld	a,(beep)
+	or	a		; is a beep wanted?
+	call	nz,ilprt	; go beep ONLY IF ASKED!
+	db	7,0		; this ONLY works because 7 is a single byte
+				; instruction: rlca.
+	call	mtprt
+	dw	[16 << 8] + 10
+	db	'Transfer \0'	; start printout
+	pop	af
+	ld	hl,cplmsg	; assume all is well
+	jr	z,pxfmsg	; z => no error: go tell about it
+	ld	hl,ermsg	; else set up an error message
+pxfmsg:	jp	prtslp
+
+.extern	pmode
+pmode:
+	pop	hl
+	ld	(ressp),sp
+	push	hl
+	call	prompt
+	db	'Mode? \0'	; how are we receiving?
+	ld	hl,ipbuf
+	call	byp		; see what first char is
+	or	a		; see if anything at all
+	pop	de
+	ret	z		; return to next lower level if not
+	or	0x20		; lower case
+	push	de
+	cp	'k'		; check the 'k' of kermit
+	ret
+
+.dseg
+cplmsg:	db	'complete\r\n\n\0'
+ermsg:	db	'error\r\n\n\0'
+

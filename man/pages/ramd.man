@@ -1,0 +1,19 @@
+NAME
+	ramd - disable/enable internal ramdisk (NC200/NC150 only)
+
+SYNOPSIS
+	ramd [0|1]
+
+DESCRIPTION
+	Disable (0) or enable (1) internal ramdisk. This switches
+	between the usual memory card drives, and a single A: drive
+	(which you will need to format before use, unless you booted
+	from a floppy disk). The usable ramdisk size is 45k on the
+	NC200, and 61k on the NC150.
+
+	You cannot use the ramdisk and a memory card at the same time
+	(though you can freely switch between them). I recommend only
+	using the ramdisk if you lack a memory card.
+
+SEE ALSO
+	format

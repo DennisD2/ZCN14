@@ -1,0 +1,21 @@
+NAME
+	ted200 - text editor (NC200 version)
+
+SYNOPSIS
+	ted200 [filename]
+
+DESCRIPTION
+	TED is a screen-oriented text editor that can be used to
+	create new files and edit existing ones.
+
+	ted200.com is a version for the NC200, configured to use the
+	21-line screen, but otherwise identical to ted.com. Please see
+	the ted man page for further details.
+
+AUTHOR
+	Hector Peraza
+
+SEE ALSO
+	ted, note
+
+	support/ted/docs (in ZCN distribution)

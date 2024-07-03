@@ -1,0 +1,402 @@
+; sendx.z - file send using xmodem protocol
+
+.incl	"c:vars"
+.incl	"c:xmodem"
+
+.extern	xsfile
+xsfile:
+	xor	a
+	ld	(closeo),a
+	ld	(attmps),a
+	ld	a,(auxfcb + 2)
+	or	a
+	jr	nz,noclos
+	inc	a
+	ld	(closeo),a
+	jr	sbufsz
+noclos:	ld	de,auxfcb
+	ld	c,cfsize
+	call	usrbds
+	ld	hl,(auxfcb + 34)
+	ld	(expsec),hl
+sbufsz:	ld	a,(longpk)
+	or	a
+	ld	hl,128
+	jr	z,gotbsz
+	ld	hl,1024
+gotbsz:	ld	(bufsiz),hl
+waitsu:	ld	a,30
+	call	gettoc
+	cp	'K'
+	jr	z,waitsu
+	cp	CAN
+	jr	z,sucan
+	cp	CRCCHR
+	jr	z,sucrcn
+	xor	NAK
+	jr	z,sucrcn
+	ld	hl,attmps
+	inc	(hl)
+	ld	a,(hl)
+	cp	NAKMAX
+	jr	c,waitsu
+	call	rnresp
+	jr	m7err
+sucan:	call	chkcan
+	jr	nz,waitsu
+	jr	m7err
+sucrcn:	ld	(crcmod),a
+	ld	a,(mdm7b)
+	or	a
+	jp	z,nom7
+	ld	a,(closeo)
+	or	a
+	jr	z,nom7c
+	ld	a,ACK
+	call	modopc
+	ld	a,EOT
+	call	modopc
+	xor	a
+	ret
+nom7c:	ld	(attmps),a
+	call	sndnam
+	jr	nc,m7nmok
+	call	pkterr
+	ld	a,(attmps)
+	inc	a
+	cp	RETRMX
+	jr	c,nom7c
+	call	diag
+	db	'MODEM7 batch filename error\0'
+m7errc:	call	can3
+m7err:	xor	a
+	inc	a
+	ret
+m7nmok:	call	pktok
+wack:	ld	a,5
+	call	gettoc
+	cp	'K'
+	jr	z,wack
+	cp	CRCCHR
+	jr	z,setm7c
+	xor	NAK
+	jr	z,setm7c
+	call	diag
+	db	'MODEM7 error: NAK/C expected\0'
+	jr	m7errc
+setm7c:	ld	(crcmod),a
+nom7:	ld	hl,1
+	ld	(sectnm),hl
+	ld	a,(ymdmb)
+	or	a
+	jr	z,noymf
+	ld	hl,128
+	ld	(bufsiz),hl
+	ld	l,h
+	ld	(sectnm),hl
+noymf:	xor	a
+	ld	(errors),a
+	ld	h,a
+	ld	l,a
+	ld	(sntsec),hl
+packlp:	xor	a
+	ld	(attmps),a
+	ld	a,(ymdmb)
+	or	a
+	jr	z,noym
+	ld	hl,(sectnm)
+	dec	hl
+	ld	a,h
+	or	l
+	jr	nz,noym
+	ld	a,(closeo)
+	or	a
+	jr	z,noymc
+	xor	a
+	ret
+noymc:	ld	a,(longpk)
+	or	a
+	jr	z,getyfs
+	ld	h,1024 >> 8
+	ld	(bufsiz),hl
+getyfs:	call	gettc3
+	cp	CAN
+	jr	z,yfscan
+	cp	'K'
+	jr	z,getyfs
+	cp	CRCCHR
+	jr	z,yfscrc
+	ld	hl,attmps
+	inc	(hl)
+	ld	a,(hl)
+	cp	NAKMAX
+	jr	c,getyfs
+	call	diag
+	db	'YMODEM error: C expected\0'
+yfserc:	call	can3
+yfserr:	xor	a
+	inc	a
+	ret
+yfscan:	call	chkcan
+	jr	nz,getyfs
+	jr	yfserr
+yfscrc:	ld	(crcmod),a
+	xor	a
+	ld	(attmps),a
+noym:	ld	a,(bufsiz 1)
+	or	a
+	jr	z,bsok
+	ld	a,(errors)
+	cp	KSWMAX
+	jr	nz,noksw
+	call	diag
+	db	'Too many errors - reducing packet size\0'
+	xor	a
+	ld	(olp),a
+	jr	dropbs
+noksw:	ld	hl,(expsec)
+	ld	de,(sntsec)
+	or	a
+	sbc	hl,de
+	jr	z,bsok
+	ld	a,l
+	and	~7
+	or	h
+	jr	nz,bsok
+	call	diag
+	db	'End of file - reducing packet size\0'
+dropbs:	ld	hl,128
+	ld	(bufsiz),hl
+	xor	a
+	ld	(longpk),a
+bsok:	ld	hl,(sectnm)
+	ld	a,h
+	or	l
+	jr	z,ymname
+	ld	de,xbuff
+	ld	hl,(bufsiz)
+filbuf:	push	hl
+	push	de
+	call	getw2c
+	pop	de
+	pop	hl
+	jp	c,pakbrk
+	ld	(de),a
+	inc	de
+	dec	hl
+	ld	a,h
+	or	l
+	jr	nz,filbuf
+	jr	xmitlp
+ymname:	ld	hl,xbuff
+	ld	de,xbuff + 1
+	ld	bc,127
+	ld	(hl),b
+	ldir
+	ld	a,(closeo)
+	or	a
+	jr	nz,noymnm
+	ld	de,auxfcb + 2
+	ld	hl,xbuff
+	ld	b,8
+	call	scnfil
+	ld	a,(de)
+	and	0x7f
+	cp	' '
+	jr	z,noext
+	ld	(hl),'.'
+	inc	hl
+	ld	b,3
+	call	scnfil
+noext:	ld	hl,xbuff - 1
+lower:	inc	hl
+	ld	a,(hl)
+	or	a
+	jr	z,setfs
+	cp	'A'
+	jr	c,lower
+	cp	'Z' + 1
+	jr	nc,lower
+	set	5,(hl)
+	jr	lower
+setfs:	ld	hl,(expsec)
+	ld	(xbuff + 126),hl
+noymnm:	xor	a
+	ld	(attmps),a
+xmitlp:	ld	a,(bufsiz + 1)
+	or	a
+	ld	a,SOH
+	jr	z,gotsoh
+	inc	a
+gotsoh:	call	modopc
+	ld	a,(sectnm)
+	push	af
+	call	modopc
+	pop	af
+	cpl
+	call	modopc
+	ld	hl,0
+	ld	(chksum),hl
+	ld	hl,(bufsiz)
+	ld	de,xbuff
+snddat:	ld	a,(de)
+	push	hl
+	push	de
+	call	modopc
+	pop	de
+	ld	a,(crcmod)
+	or	a
+	ld	a,(de)
+	jr	z,updcsm
+	push	de
+	call	updcrc
+	pop	de
+	jr	sndcnt
+updcsm:	ld	hl,chksum
+	add	a,(hl)
+	ld	(hl),a
+sndcnt:	pop	hl
+	inc	de
+	dec	hl
+	ld	a,h
+	or	l
+	jr	nz,snddat
+	call	flsrng
+	ld	a,(crcmod)
+	or	a
+	ld	a,(chksum + 1)
+	call	nz,modopc
+	ld	a,(chksum)
+	call	modopc
+	ld	hl,attmps
+	inc	(hl)
+	ld	a,10
+	call	gettoc
+	jr	c,timeo
+	cp	ACK
+	jr	z,respok
+	cp	CAN
+	jr	nz,nocan
+	call	chkcan
+	jp	z,m7err
+nocan:	push	af
+	call	cvtnib
+	ld	(char + 1),a
+	pop	af
+	rrca
+	rrca
+	rrca
+	rrca
+	call	cvtnib
+	ld	(char),a
+	call	diag
+	db	'Non-ACK: 0x'
+char:	db	'ZZ\0'
+	jr	ackerr
+timeo:	call	diag
+	db	'Timeout\0'
+ackerr:	call	pkterr
+	ld	hl,errors
+	inc	(hl)
+	ld	a,(attmps)
+	cp	RETRMX
+	jr	nc,retrer
+	ld	a,(hl)
+	cp	ERRMAX
+	jp	c,xmitlp
+	call	diag
+	db	'Too many errors\0'
+	jr	rtrcan
+retrer:	call	diag
+	db	'Too many retries\0'	
+rtrcan:	jp	m7errc
+respok:	call	pktok
+	ld	hl,(sectnm)
+	inc	hl
+	ld	(sectnm),hl
+	dec	hl
+	ld	a,h
+	or	l
+	jr	z,jppl
+	ld	a,(bufsiz + 1)
+	ld	de,8
+	or	a
+	jr	nz,updss
+	ld	e,1
+updss:	ld	hl,(sntsec)
+	add	hl,de
+	ld	(sntsec),hl
+jppl:	jp	packlp
+pakbrk:	ld	b,RETRMX
+eotlp:	push	bc
+	ld	a,EOT
+	call	modopc
+	ld	a,15
+	call	gettoc
+	pop	bc
+	cp	ACK
+	jr	z,didit
+	cp	NAK
+	jr	z,eotlp
+eotna:	call	diag
+	db	'EOT not acked\0'
+badeot:	djnz	eotlp
+	call	rnresp
+	xor	a
+	inc	a
+	ret
+didit:	xor	a
+	ret
+
+.extern	sndnam
+sndnam:
+	ld	hl,auxfcb + 2
+	ld	de,auxlin
+	push	de
+	ld	bc,11
+	ldir
+	pop	hl
+	ld	bc,11 << 8	
+	ld	a,ACK
+	call	moppsh
+snlp:	call	mopahl
+cknak:	ld	a,6
+	call	gettcp
+	cp	CAN
+	jr	nz,nocan1
+	ld	a,3
+	call	gettcp
+	cp	CAN
+	jr	nz,cknak
+	scf
+	ret
+nocan1:	cp	ACK
+	jr	nz,badnam
+acknam:	inc	hl
+	djnz	snlp
+	ld	(hl),0x1a
+	call	mopahl
+	ld	a,10
+	call	gettcp
+	cp	c
+	jr	nz,badnam
+	ld	a,ACK
+	call	modopc
+	or	a
+	ret
+badnam:	ld	a,BADNAM
+	call	modopc
+	scf
+	ret
+
+mopahl:	ld	a,(hl)
+	add	a,c
+	ld	c,a
+	ld	a,(hl)
+moppsh:	push	bc
+	push	hl
+	call	modopc
+	pop	hl
+	pop	bc
+	ret
+

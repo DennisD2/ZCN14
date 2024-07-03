@@ -1,0 +1,774 @@
+;ZCN v1.4 - a free CP/M-like OS for the Amstrad NC100 Notepad.
+;Copyright (C) 1994-2022 Russell Marks. See `zcn.txt' for license details.
+
+;keyboard reader, called from int handler.
+
+;only UK keyboard natively supported, but `keyb' patches the
+;in-memory tables so you can use others.
+
+;the key-reading is more complicated than you'd expect, because the NC's
+;keyboard hardware is, shall we say, imperfect. The keys are `sticky'
+;enough that it's *very* easy to press two keys at once - the
+;`kvpure'-related code deals with that. The big problem though is that
+;if *three* keys or more are pressed at once, a spurious key is
+;generated! (This is the reason why "really" typed fast at the ROM
+;software comes out as "reslly" - the `s' is the spurious key here.)
+;ZCN copes with this by effectively ignoring any ints where >=3
+;(non-shift) keys are pressed. It sounds a bit dodgy, but it works.
+;The examples below should show why.
+
+;So, here are two examples of what the code has to deal with. Type
+;"program" quickly, and it can come out as this:
+;(repeated keyboard states omitted, the no-keys state shown as `-')
+;
+;	p - r ro - g gr grat ra a am 
+;
+;that's `p' alone, then nothing, then `r' alone, then `r' and `o'
+;together, and so on. The `t' is the spurious key in this case.
+;
+;"really" comes out like this:
+;
+;	r re reas ea a al l - l - y
+;
+;the code here copes with both, as well as other difficult ones like
+;"in " (i, n, space) typed quickly. This is much better than the ROM
+;manages, and is near-as-dammit a complete workaround for the (IMHO)
+;buggy keyboard hardware. [Hmm, actually, I have my doubts, but I
+;can't seem to get it much better...]
+
+
+;NB: the auto-repeat acts a little strangely:
+;if you hold down, say, shift+w, it repeats, then let go of shift,
+;you get something like "WWWWWWWWWWWwwwwwwww". I suppose the
+;`is the key the same?' test should include shift status.
+
+
+;call 'kupdate' from interrupt routine to read kybd etc.
+;call 'kgetchar' to read a key from keyboard buffer:
+; carry set if ok, and char in a; carry reset if buffer empty.
+
+;here's the way the keyboard is laid out in terms of ports and bits:
+;
+;Port                     Bit number
+;
+;   |    7     6     5     4     3     2     1     0
+;---+---------------------------------------------------
+;b0 |                    Enter  Left       RShft LShft
+;b1 |          5               Space Stop  Ctrl Function
+;b2 |                           Tab    1   Symb CapsLck
+;b3 |    D     S           E     W     Q     2     3
+;b4 |    F     R           A     X     Z           4
+;b5 |    C     G     Y     T     V     B
+;b6 |    N     H     /     #   Right Del-> Down    6
+;b7 |    K     M     U   Menu   Up     \     7     =
+;b8 |    ,     J     I     '     [     ]     -     8
+;b9 |    .     O     L     ;     P   <-Del   9     0
+
+;'standard' keymappings
+kldel	equ 07fh	;'<-Del' key - used as delete (backspace)
+krdel	equ 7		;'Del->' key - used as ^G (del. char under cursor)
+
+kleft	equ 'S'-040h
+kright	equ 'D'-040h
+kdown	equ 'X'-040h
+kup	equ 'E'-040h
+kmenu	equ '`'		;we use 'menu' as backquote
+;these for internal use only (and keyb)
+;the values of ksymbol,kctrl,kfunc,krshift,klshift,kcapslk are deliberately
+;contiguous and must remain so.
+ksymbol	equ 0c0h
+kctrl	equ 0c1h
+kfunc	equ 0c2h
+krshift	equ 0c3h
+klshift	equ 0c4h
+kcapslk	equ 0c5h
+;additional keymap constants for dead key support, these must be
+;consecutive from kdk1 to kdk4 but do not need to be contiguous with
+;the constants for the shift etc. keys.
+;kdk1 must be lowest and kdk4 highest numerically, and the lowest two
+;bits must be 0..3 for kdk1..kdk4.
+kdk1	equ 0c8h
+kdk2	equ 0c9h
+kdk3	equ 0cah
+kdk4	equ 0cbh
+;the special 'none' marker (must stay this value)
+knone	equ 0ffh
+
+;dead key flag:
+;dkprev = setting of dead keys from the *previous* time a key was read,
+;from bit 0 = kdk4, to bit 3 = kdk1. 1 if key was pressed, else 0.
+;To count as pressed, the key will have needed to make it through most
+;of the usual key-reading code intact.
+;
+;(That includes shift and symbol mappings, in case dead keys are on
+;those. Which does mean kdk1..4 values may get exposed to the user in
+;some cases (e.g. unmapped Symbol plus dead key), but oh well...)
+dkprev equ dkprevop+1
+
+;keyboard shift state flag:
+;bit 0 is set if left shift is pressed
+;bit 1 is set if right shift is pressed
+;bit 2 is set if function is pressed
+;bit 3 is set if control is pressed
+;bit 4 is set if symbol is pressed
+kstate: defb 0
+
+;0=caps lock off, 1=caps lock on
+klock:   defb 0
+
+;see main.z for `keytbl', the port -> keycode conversion table,
+;and `kportin', used to hold the kybd port data.
+
+;256-byte raw keyboard map, byte is 1 if key num. pressed else 0
+;for example, to see if 'q' is pressed you could do something like:
+; ld a,(krawmap+'q')
+; and a
+; ...etc.
+krawmap:
+defw 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0
+defw 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0
+defw 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0
+defw 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0
+defw 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0
+defw 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0
+defw 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0
+defw 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0
+
+;holds last 'real' key pressed - i.e. last key read returned
+klast: defb 0
+kpurekey: defb 0	;key without shifts applied
+kvpure: defb 0		;key without shifts or caps lock applied
+
+;in addition we keep a keyboard buffer; 128 bytes (127 really),
+;very hard-coded!
+;it wraps on hitting the end, as you may have guessed... :-)
+kbuf	equ 0e800h
+kbstart: defw kbuf	;points to 1st char in buffer
+kbend:   defw kbuf	;points to char *after* last char in buffer
+
+;to clarify the above:
+;remember the pointers are mod kbufsiz (i.e. they wrap around)
+;if kbstart=kbend, there are no chars in the buffer.
+;if kbstart<kbend, there are kbend-kbstart chars in the buffer.
+;if kbstart>kbend, there are kbend+kbufsiz-kbstart chars in it.
+;the max. usable size of the buffer is therefore only 127,
+;but that's worth it for the saving in laundry bills.
+
+
+;auto-repeat settings in 1/100ths (well, really measured in calls to 'kupdate')
+;(maybe these should be variables...)
+krwait	equ 50		;wait before first repeat (must be <256)
+krwrep	equ 5		;wait after repeat before next
+
+;krheld and krsubh timers moved to main.z
+
+;1 if caps lock was pressed last time we looked, else 0
+;used to stop caps lock toggling like crazy
+kwasclk	equ kwasclkop+1
+
+
+
+;read keyboard, update caps lock and shift states,
+;put key pressed (if any) in keyboard buffer (adding any
+;auto-repeat etc.).
+;this is what the interrupt routine calls.
+;entry: A is non-zero if a key is pressed
+kupdate:
+;construct keyboard bytemap
+;(not needed if A is zero)
+and a
+jr z,kunokey2
+
+call kgetmap
+
+;stop now if (tightint) set
+ld a,(tightint)
+and a
+ret nz
+
+;update 'key held down for' timer
+ld hl,(krheld)
+inc hl
+ld (krheld),hl
+
+;figure out keypress from the bytemap
+call krmkey
+jr nc,kunokey	;if no (effective) key pressed 
+
+;check for ctrl-shift-s
+cp 'S'-040h	;of course, it will be a ^s :-)
+jr nz,notcss
+ld e,a
+ld a,(kstate)
+cp 9	;control+leftshift
+ld a,e
+jr nz,notcss
+
+;a is already non-zero (^s) so just use that
+ld (pendsdmp),a		;set 'pending screen dump' flag
+jr kunokey		;act like no key pressed
+
+notcss:
+ld e,a
+ld a,(kpurekey)
+ld hl,klast
+cp (hl)
+ld (hl),a
+ld a,e
+;if the key is the same as last time (ignoring shifts), hand over
+;control to the auto-repeat routines - otherwise just add it.
+jr z,kautorep
+
+call kaddbuf	;add char in a to buffer
+;reset both `held key down for' timer and sub-repeat timer
+xor a
+ld h,a
+ld l,a
+ld (krheld),hl
+ld (krsubh),a
+ret
+
+
+kunokey2:
+;zero things which would be zeroed before first (other) jump to
+;`krnokey' if krmkey were called
+xor a
+ld (kstate),a
+ld (kwasclk),a
+
+kunokey:
+xor a
+ld (klast),a
+ret
+
+
+;handle auto-repeat (the key is in a, and in (klast))
+kautorep:
+ld c,a
+ld hl,(krheld)
+ld de,krwait	;krwait is <256
+and a
+sbc hl,de
+ret c		;don't bother if not held long enough yet
+ld hl,krsubh
+jr z,krrep1	;jump if first repeat
+
+;now we incr. and test the subrepeat timer.
+inc (hl)
+ld a,krwrep
+cp (hl)
+ret nz
+
+krrep1:
+;d is still zero
+ld (hl),d
+
+ld a,c
+;FALLS THROUGH to add char to buffer
+
+
+;add char in a (and (klast)) to keyboard buffer
+kaddbuf:
+;reset auto-poweroff timeout
+ld hl,(pwrofftm)
+ld (potimout),hl
+
+ld e,a
+ld hl,(kbend)
+
+ld a,l
+inc a
+and 07fh	;mod 128
+ld l,a
+
+ld a,(kbstart)
+;if they're equal, the buffer is 'full'
+; (see near 'krend' def. for details)
+cp l
+ret z
+ld (kbend),hl
+
+ld a,l
+dec a
+and 07fh
+ld l,a
+
+ld (hl),e
+ret
+
+
+;get char from buffer into a (carry set if ok, false if buffer empty).
+kgetchar:
+call chksdmp	;needed in case we do scrndmp at ccp
+
+kbasget:	;for bbc basic, so it can read Esc quickly
+;actually get char from serial if we're using aux as conin:
+ld a,(conin)
+cp auxin
+jp z,sgetchar	;exact same function but from serial
+
+ld a,(kbstart)
+ld e,a
+ld a,(kbend)
+cp e
+ret z		;and carry is false
+
+ld hl,(kbstart)
+ld a,(hl)
+push af
+ld a,l
+inc a
+and 07fh
+ld l,a
+pop af
+ld (kbstart),hl
+scf		;carry set
+ret
+
+
+;get char from buffer into a (carry set if ok, false if buffer empty).
+;BUT leaves char in buffer.
+;also used as kchkchar (check if char is pending) because the
+;extra overhead of reading the char is extremely small (two ops).
+kseechar:
+kchkchar:
+call chksdmp	;needed in case we do scrndmp at ccp
+
+kbaschk:	;for bbc basic, so it can check for Esc quickly
+;see char from serial buf if we're using aux as conin:
+ld a,(conin)
+cp auxin
+jp z,sseechar	;exact same function but from serial
+
+ld a,(kbstart)
+ld e,a
+ld a,(kbend)
+cp e
+ret z		;carry false also
+
+ld hl,(kbstart)
+ld a,(hl)
+scf		;carry set
+ret
+
+
+;read raw keypress map and process into byte-per-keypress map
+;(if called, we know at least one key was pressed)
+;`jp's are used here for speed (a conditional jp is 3 cycles faster
+;than a jr when the condition is true).
+kgetmap:
+;we cleared out krawmap last time (after) a key was pressed,
+; and it's also cleared on cold boot.
+
+ld hl,kportin
+ld de,keytbl
+ld c,10
+
+krm_ry:
+ld a,(hl)
+ld b,8
+
+krm_rx:
+rlca
+jp nc,krmskip
+
+push bc
+push hl
+ex de,hl
+ld c,(hl)
+ex de,hl
+ld hl,krawmap
+ld b,0
+add hl,bc
+inc b
+ld (hl),b
+pop hl
+pop bc
+
+krmskip:
+inc e		;this is ok for keytbl (see main.z)
+djnz krm_rx
+
+inc l		;this is ok for kportin (see main.z)
+dec c
+jp nz,krm_ry
+ret
+
+
+;kclrmap moved to misc.z (so it can fall through into zeroblk)
+
+
+;read map key - returns carry set and char in A, or nc if no key
+;works out what value should be returned when a console key is read
+;the routine is *destructive* in that it blasts data in krawmap
+;again, `jp's used for speed
+;[well that clearly didn't last... :-)]
+
+krmkey:
+;if this is called, we know a (physical) key is pressed -
+;but we return nc if no `proper' (i.e. non-shift) key is pressed, etc.
+
+;first, swap caps lock and control key if (capsctrl).
+capsctrlop: ld a,0	;capsctrl
+and a
+jr z,krskip0
+
+ld hl,krawmap+kcapslk
+ld de,krawmap+kctrl
+ld a,(de)
+ld b,a
+ld a,(hl)
+ld (de),a
+ld (hl),b
+
+krskip0:
+;construct shift status and remove shift keys from map
+;(caps lock is also removed but dealt with differently)
+;done the 'wrong way round' because of the rl'ing
+;horrible nasty way to do it but it'll have to do
+
+;the values of ksymbol,kctrl,kfunc,krshift,klshift are deliberately
+;contiguous and in that order, so we can do this:
+ld e,0
+ld hl,krawmap+ksymbol
+ld b,5
+and a		;make sure (krawmap+ksymbol) isn't left non-zero
+kshiftlp:
+rr (hl)
+rl e
+inc hl
+djnz kshiftlp
+
+ld a,e
+ld (kstate),a
+
+;ok, that's the keyboard state done, now do the caps lock
+;hl already points to krawmap+kcapslk, because kcapslk is klshift+1
+kwasclkop: ld c,0	;kwasclk
+xor a
+ld (kwasclk),a
+ld a,(hl)
+and a
+ld (hl),b	;nuke any caps lock keypress (b still zero from djnz)
+jr z,krskip1
+
+ld a,1
+ld (kwasclk),a	;set 'clk was pressed' flag
+
+ld a,c
+and a
+jr nz,krskip1	;if clk was pressed before, don't toggle it again
+
+ld a,(klock)
+xor 1
+ld (klock),a
+
+krskip1:
+;that's the shift and caps lock reading done.
+;if more than one key is pressed now, we give up and return 'no key
+;pressed'. (not quite true - see below)
+
+;check keyboard map for key(s)
+ld hl,krawmap
+ld bc,255	;assuming knone is FFh
+ld a,1
+cpir
+;if none was pressed...
+jp nz,krnokey
+;otherwise, save bc (well, c) and check for other keys
+ld e,c
+push hl
+cpir
+pop hl
+jr nz,kronerealkey	;only one key found
+
+;so we've found another match, which means two (or more)
+;non-shift keys are pressed. in this case we don't report `no
+;key pressed', as you might expect, but see if the `kvpure'
+;key (which was the last one to be pressed on its own) is being pressed.
+;if so, we zero it out and run the keyboard check again.
+ld a,(kvpure)
+ld c,a
+ld b,0
+ld hl,krawmap
+add hl,bc
+ld a,(hl)	;is the old key still pressed?
+and a
+jr z,krnokey2	;if not, give up.
+ld (hl),b	;zero it out (b still zero)
+
+;try reading the map again
+ld hl,krawmap
+ld c,255	;assuming knone is FFh (b still zero)
+ld a,1
+cpir
+;we know at least one will still be pressed, so see if this is the
+;only one or not...
+ld e,c
+push hl
+cpir
+pop hl
+jr nz,kronekey	;only one key found
+
+;otherwise, still >=2 keys pressed, so give up.
+jr krnokey2
+
+
+kronerealkey:
+;if here, we found exactly one key without having to fiddle it. :-)
+;this is the only case where we set kvpure.
+;(other than if >=3 keys are pressed, or if 2 new keys are pressed at
+; exactly the same time - it's set to kvnone in those cases)
+ld a,254
+sub e
+ld (kvpure),a
+;FALLS THROUGH
+;(means repeating the calc, but so what :-))
+
+kronekey:
+;find the key the saved c (in e) was indicating.
+;address of key is in hl-1, from the cpir.
+;first though, zero out the key
+dec hl
+ld (hl),0
+ld a,254
+sub e
+ld e,a
+
+;that's it then, the key number in a. Now we just have to apply modifiers.
+;first apply caps lock if appropriate.
+ld a,(klock)
+and a
+ld a,e
+jr z,krskip2
+call isalpha
+jr nc,krskip2
+xor 020h
+krskip2:
+
+;put key back in E
+ld e,a
+
+ld (kpurekey),a		;save 'pure' key (pure aside from capslock/dk map)
+
+ld a,(kstate)
+ld d,a
+;shift states in d, key pressed in e
+and 3
+;nz=shift
+ld a,e
+call nz,kshiftc	;alters A, preserves D
+ld e,a
+
+;if a dead key was pressed previously, apply mapping:
+;- only one dead key is counted at once, with one mapping for each
+;- mapping is available for space and aeiouAEIOU vowels only
+;- yes this is rather limited, but even doing this much was awkward
+;(no caps lock effect is supported for dead key mappings)
+
+dkprevop: ld a,0 	;modified
+and a
+call nz,kdkc		;alters E, preserves D
+
+;symbol does another lookup table, else sets bit 7
+bit 4,d
+call nz,ksymbolc 	;alters E, preserves D
+
+;if we currently have a dead key, save it for next time
+ld a,e
+cp kdk1
+jr c,krskip3
+cp kdk4+1
+jr nc,krskip3
+
+ld (dkprev),a
+
+;ok, now can return with no key
+;(XXX Presumably kvpure is physical level and should be staying as-is,
+;but I'm not absolutely certain TBH.)
+xor a		;carry false
+ret
+
+krskip3:
+;otherwise, zero out dkprev
+xor a
+ld (dkprev),a
+
+;control (note that 'function' also acts as control)
+ld a,d
+and 12		;bit 2 or 3
+ld a,e
+jr z,krskip4
+
+;fairly crude - just strip off high 3 bits, giving a mod 32 value.
+;(well, except the top bit in case we set meta :-))
+and 09fh
+
+krskip4:
+scf		;carry true
+ret
+
+;this exit used if >=3 non-shift keys were pressed (too many!)
+krnokey2:
+call kclrmap	;need to clear the map, as many keys were pressed
+;have to make sure we lose kvpure state...
+ld a,knone
+ld (kvpure),a
+;FALLS THROUGH
+
+krnokey:
+;used to have `ld a,knone' here, but that's not needed, just this...
+and a		;carry false
+ret
+
+
+;returns carry set if upper or lower alphabetic in a
+isalpha:
+call isupper
+ret c
+jr islower
+
+;returns carry set if uppercase alpha char. in a
+isupper:
+cp 'A'
+ccf
+ret nc
+cp '['
+ret
+
+;returns carry set if lowercase alpha char. in a
+;preserves all except flags
+islower:
+cp 'a'
+ccf
+ret nc
+cp '{'
+ret
+
+
+kshsrc:
+;shift mapping, source bytes (22 bytes)
+defb '12','3', '4567890-=[];',027h,'#,./\`'	;027h is ' (single quote)
+kshdst:
+;dest bytes
+defb '!"',09ch,'$%^&*()_+{}:','@', '~<>?|~'	;9ch is the pound sign
+
+;this must be directly after the above
+ksymsrc:
+;symbol mapping, source bytes (15 bytes)
+;the maximum needed by any NC layout (at least in the way ZCN does it)
+;with added euro sign support is 15.
+defb '4'	;so, only entry for UK is symbol-4 for euro sign
+defs 14
+ksymdst:
+;dest bytes
+defb 0d5h	;euro sign in code page 858 (i.e. revised 850 with euro)
+defs 14
+
+;this must be directly after the above
+;dead key mapping, dest bytes only (11 each for kdk1..kdk4 codes)
+kdkdst1:
+defs 44
+
+;kdksrc are shared source bytes for above, all of kdk1..kdk4 use it;
+;these are the only characters mappable with dead keys, all others
+;will be unmodified.
+;contents are " aeiouAEIOU" - it's in misc.z so it can be used as part
+;of ilprint token string.
+
+
+;shift a char in A - i.e. `b' goes to `B', `;' goes to `:', etc.
+;does alphabetics by xor'ing with 20h in case of caps lock.
+kshiftc:
+call isalpha
+jr nc,ksc1
+
+xor 020h
+ret
+
+ksc1:
+;great. it gets a bit painful here.
+ld hl,kshsrc
+ld bc,22
+cpir
+ret nz		;give up if it's not in the table
+
+;otherwise use the dest byte
+ld a,21
+sub c
+ld c,a
+ld hl,kshdst
+add hl,bc
+ld a,(hl)
+ret
+
+
+;add symbol effect to a char in E (not A).
+;preserves D
+ksymbolc:
+;quick exit if no symbol table in use
+ld c,e
+set 7,e
+ld hl,ksymsrc
+ld a,(hl)
+and a
+ret z
+
+ld a,c
+;lowercase the copy of the char we use for searching
+;XXX probably don't want this after all?
+;call islower
+;jr c,ksym2
+;xor 020h
+;ksym2:
+ld bc,25
+cpir
+ret nz		;if it's not in the table, it's in E (bit 7 set already)
+
+;otherwise use the dest byte
+ld hl,ksymdst
+ld a,24
+ksctail:	;also used below
+sub c
+ld c,a
+add hl,bc
+ld e,(hl)
+ret
+
+
+;apply dead key mapping to a char in E (not A).
+;entry:	E=char, A=(dkprev)
+;exit:	E=char as mapped
+;preserves D
+kdkc:
+push de
+
+;src table is fixed, but figure out which dst table to use.
+;Need to turn dkprev (kdk1..kdk4) into kdkdst1+11*(dkprev-kdk1).
+and 3
+inc a
+ld b,a		;B=1..4 for kdk1..kdk4
+ld hl,kdkdst1-11 ;start off before kdk1 map
+ld de,11
+kdkclp:
+add hl,de	;point to next map
+djnz kdkclp
+
+;HL now points to map for kdk1..4 as appropriate.
+pop de
+push hl
+ld a,e
+
+;we already know there are dead key mappings in use, as otherwise the
+;main keymap would not have included any kdk1..4 codes.
+;(Could do this earlier, but doesn't seem worth being faster in such a
+;case, and I think it would increase code size.)
+ld hl,kdksrc
+ld bc,11
+cpir
+pop hl
+ret nz		;if it's not in the table, then it's E as-is
+
+;otherwise use the dest byte
+ld a,10
+jr ksctail

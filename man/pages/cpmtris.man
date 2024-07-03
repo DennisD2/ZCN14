@@ -1,0 +1,49 @@
+NAME
+	cpmtris - a puzzle game
+
+SYNOPSIS
+	cpmtris [termtype [mhz10]]
+
+DESCRIPTION
+	A puzzle game for CP/M machines. This should be patchable to
+	work on any Z80-based CP/M, but has builtin support for ZCN.
+
+	On ZCN you would normally run it as `cpmtris', but to run it
+	on a VT100 serial console, do `|s' if you haven't already,
+	then `cpmtris 1'.
+
+OPTIONS
+	termtype	if given, specifies the terminal type to use,
+			from the following supported types:
+
+			0	as defined in patch area
+			1	VT100 (default)
+			2	VT52 (PCW, +3, etc.)
+			3	ZCN (this is auto-detected)
+			4	VC404
+			5	ADM-3A
+
+	mhz10		if given, should be ten times the speed (in
+			MHz) of the Z80 the machine has. For example,
+			on a 3.5MHz machine you'd use '35'. You must
+			have specified `termtype' to use 'mhz10'. On
+			ZCN this defaults to 46.
+
+GAMEPLAY
+	Blocks fall from the top of the screen. You have to fit them
+	together to make solid horizontal lines, as a horizontal line
+	of blocks disappears to make room for more blocks. And why is
+	this the case? Well, if the pile of blocks reaches the top of
+	the screen, it's game over. So it quickly gets important to
+	fit the shapes together well, and not leave any gaps.
+
+KEYS
+	S		rotate block
+	D		drop block
+	K		move block left
+	L		move block right
+
+BUGS
+	Cpmtris does not speed up. It starts pretty fast and stays
+	that way. If you want to play it faster, specify a `mhz10'
+	rating on the command-line lower than 46.

@@ -1,0 +1,178 @@
+; catch.z - open & close catch files, also put them on hold
+
+.incl	"c:vars"
+
+.extern	catch
+catch:
+	ld	a,(cflg)
+	or	a
+	jr	z,tfileo
+	ld	a,2
+	ld	(cflg),a
+
+.extern	hold
+hold:
+	ld	hl,cflg
+	ld	a,(hl)
+	or	a		; file open?
+	ret	z		; no - so do nothing
+	xor	3
+	ld	(hl),a		; toggle hold mode
+	push	af
+	call	ilprt
+	db	'\r\nCatch file \0'
+	pop	af
+	dec	a
+	jr	z,reac
+	call	ilprt
+	db	'on hold\r\n\0'
+	ret
+reac:	call	ilprt
+	db	'reactivated\r\n\0'
+	ret
+
+.extern	cclose
+cclose:
+	ld	a,(cflg)
+	or	a
+	ret	z
+	call	doclos
+	call	ilprt
+	db	'\r\nFile closed\r\n\0'
+	ret
+
+tfileo:	call	getfcb
+	ret	c
+	jp	z,nowc
+	ld	a,(fcb + 2)
+	cp	' '
+	scf
+	ret	z
+	call	reset
+	ld	hl,fcb
+	ld	de,cfcb
+	push	de
+	ld	bc,34
+	ldir
+	pop	de
+	push	de
+	ld	c,open
+	call	usrbds
+	inc	a
+	pop	de
+	jr	z,isok
+appndq:	ld	hl,10
+	add	hl,de
+	bit	7,(hl)
+	jr	z,appok
+	call	ilprt
+	db	'Can\'t append file\r\n\0'
+	ret
+appok:	ld	c,cfsize
+	push	de
+	call	usrbds
+	pop	de
+	ld	hl,36
+	add	hl,de
+	ld	a,(hl)
+	dec	hl
+	or	(hl)
+	dec	hl
+	or	(hl)
+	jr	z,creok
+declp:	ld	a,(hl)
+	dec	(hl)
+	inc	hl
+	or	a
+	jr	z,declp
+	push	de
+	ld	de,(cbuff)
+	ld	c,setdma
+	call	bdos
+	call	fill1a
+	pop	de
+	ld	c,redrnd
+	call	usrbds
+	ld	hl,(cbuff)
+	dec	hl
+eofl:	inc	hl
+	ld	a,(hl)
+	cp	0x1a
+	jr	nz,eofl
+	ld	(cptr),hl
+	jr	setcfo
+isok:	ld	c,create
+	call	usrbds
+	inc	a
+	jr	nz,creok
+	call	ilprt
+	db	'Can\'t create file\r\n\0'
+	ret
+creok:	call	fill1a
+setcfo:	call	ilprt
+	db	'File opened\r\n\0'
+	xor	a
+	inc	a
+setcfl:	ld	(cflg),a
+	ret
+
+doclos:	call	flushc
+	ld	de,cfcb
+	ld	c,close
+	call	usrbds
+	call	ctlq
+	xor	a
+	jr	setcfl
+
+.extern	flushc			; enter here to flush any pending write of
+flushc:				; catch buffer
+	ld	hl,(cptr)
+	ld	de,(cbuff)	; point at buffer
+	or	a
+	sbc	hl,de		; how many chars in buffer
+	dec	hl
+	add	hl,hl
+	inc	h
+	ld	b,h		; converted to sector count
+	ret	z		; nothing to write - exit now
+	push	bc
+	push	de
+	call	ctls		; hold up the other end
+	pop	de
+	pop	bc
+wrtlp:	push	bc
+	push	de		; save registers
+	ld	c,setdma
+	call	bdos		; set dma for next 128 bytes
+	ld	de,cfcb
+	ld	c,write
+	call	usrbds		; out they go
+	pop	de
+	ld	hl,128
+	add	hl,de		; move dma
+	ex	de,hl
+	pop	bc
+	djnz	wrtlp		; loop till all done
+
+fill1a:				; enter here to fill catch buffer with 0x1a's
+				; and reset catch pointer
+	ld	hl,(cbuff)
+	ld	(cptr),hl	; adjust catch pointer as well
+	ld	d,h
+	ld	e,l
+	inc	de		; copy to de & add 1
+	ld	bc,(cbfsiz)	; get buffer size
+	ld	(hl),0x1a	; first one
+	ldir			; and the rest
+	ret
+
+.dseg
+.extern	cflg
+cflg:	db	0
+
+.useg
+.extern	cptr
+cptr:	ds	2		; pointer to next save address
+.extern	cfcb
+cfcb:	ds	37		; fcb for catching
+

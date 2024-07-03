@@ -1,0 +1,53 @@
+;ZCN v1.4 - a free CP/M-like OS for the Amstrad NC100 Notepad.
+;Copyright (C) 1994-2022 Russell Marks. See `zcn.txt' for license details.
+
+;nc2fdshm.z
+
+;This is part of the NC200 floppy boot process, specifically this goes
+;at the start of the load4000.44 file. It's followed by zcn200.bin,
+;and gives something which can boot from 4000h (when ZCN would usually
+;be starting from 6000h or 0100h).
+
+org 080h		;see below for why
+
+;maximum sizes
+shimmax	equ 128		;max to allow for this code
+bootmax	equ 128		;max to allow for ZCN's boot.z
+zcnmax	equ 12*1024	;max for ZCN (as written with sys a:)
+
+
+;the loader should have already stopped the floppy spinning by now, so
+;no need to worry about that.
+
+;this starts off running in RAM page 44h, at 4000h. It's simplest to
+;copy to just below 0100h, fix the RAM layout, and pretend to have
+;been started in ZCN. It does makes the booting slower, but not by
+;much.
+
+di
+ld hl,04000h
+ld de,080h
+ld bc,shimmax+bootmax+zcnmax
+ldir
+jp final
+
+final:
+;memory pages are 40h/xx/42h/xx.
+;running in 40h, and ZCN's boot.z will fix the top one, so do the others
+;(though 42h shouldn't really be necessary)
+
+ld a,041h
+out (011h),a
+inc a
+out (012h),a
+
+ld a,0f7h
+ld (066h),a
+
+jr 0100h
+
+;use up the rest to 0100h (as copied)
+defs 0100h-$
+
+;must be last thing
+eof:

@@ -1,0 +1,105 @@
+;ZCN v1.4 - a free CP/M-like OS for the Amstrad NC100 Notepad.
+;Copyright (C) 1994-2022 Russell Marks. See `zcn.txt' for license details.
+
+;ZCN font data for ASCII chars 32-127.
+;This is assembled separately from zcn.bin.
+;
+;Aside from the square O and low nibbles copied from high, the font
+;data is unmodified since ZCN 0.1 in 1995.
+
+defb 000h,000h,000h,000h,000h,000h
+defb 044h,044h,044h,000h,044h,000h
+defb 0AAh,0AAh,000h,000h,000h,000h
+defb 0AAh,0EEh,0AAh,0EEh,0AAh,000h
+defb 044h,066h,0CCh,066h,0CCh,000h
+defb 088h,022h,044h,088h,022h,000h
+defb 044h,0CCh,044h,0AAh,066h,000h
+defb 022h,044h,000h,000h,000h,000h
+defb 044h,088h,088h,088h,044h,000h
+defb 044h,022h,022h,022h,044h,000h
+defb 0AAh,044h,0EEh,044h,0AAh,000h
+defb 044h,044h,0EEh,044h,044h,000h
+defb 000h,000h,000h,044h,088h,000h
+defb 000h,000h,0EEh,000h,000h,000h
+defb 000h,000h,000h,000h,044h,000h
+defb 022h,022h,044h,044h,088h,000h
+defb 044h,0AAh,0AAh,0AAh,044h,000h
+defb 044h,0CCh,044h,044h,0EEh,000h
+defb 0CCh,022h,044h,088h,0EEh,000h
+defb 0CCh,022h,044h,022h,0CCh,000h
+defb 088h,0CCh,0EEh,044h,044h,000h
+defb 0EEh,088h,0CCh,022h,0CCh,000h
+defb 066h,088h,0CCh,0AAh,044h,000h
+defb 0EEh,022h,044h,044h,044h,000h
+defb 044h,0AAh,044h,0AAh,044h,000h
+defb 044h,0AAh,066h,022h,044h,000h
+defb 000h,044h,000h,044h,000h,000h
+defb 000h,044h,000h,044h,088h,000h
+defb 022h,044h,088h,044h,022h,000h
+defb 000h,0EEh,000h,0EEh,000h,000h
+defb 088h,044h,022h,044h,088h,000h
+defb 044h,022h,044h,000h,044h,000h
+defb 044h,0EEh,0EEh,0CCh,066h,000h
+defb 044h,0AAh,0EEh,0AAh,0AAh,000h
+defb 0CCh,0AAh,0CCh,0AAh,0CCh,000h
+defb 044h,0AAh,088h,0AAh,044h,000h
+defb 0CCh,0AAh,0AAh,0AAh,0CCh,000h
+defb 0EEh,088h,0CCh,088h,0EEh,000h
+defb 0EEh,088h,0CCh,088h,088h,000h
+defb 044h,088h,0AAh,0AAh,044h,000h
+defb 0AAh,0AAh,0EEh,0AAh,0AAh,000h
+defb 0EEh,044h,044h,044h,0EEh,000h
+defb 0EEh,044h,044h,044h,088h,000h
+defb 0AAh,0AAh,0CCh,0AAh,0AAh,000h
+defb 088h,088h,088h,088h,0EEh,000h
+defb 0EEh,0EEh,0EEh,0AAh,0AAh,000h
+defb 0CCh,0AAh,0AAh,0AAh,0AAh,000h
+defb 0EEh,0AAh,0AAh,0AAh,0EEh,000h
+defb 0CCh,0AAh,0CCh,088h,088h,000h
+defb 044h,0AAh,0AAh,0EEh,066h,000h
+defb 0CCh,0AAh,0CCh,0AAh,0AAh,000h
+defb 066h,088h,044h,022h,0CCh,000h
+defb 0EEh,044h,044h,044h,044h,000h
+defb 0AAh,0AAh,0AAh,0AAh,0EEh,000h
+defb 0AAh,0AAh,0AAh,0EEh,044h,000h
+defb 0AAh,0AAh,0EEh,0EEh,044h,000h
+defb 0AAh,0AAh,044h,0AAh,0AAh,000h
+defb 0AAh,0AAh,044h,044h,044h,000h
+defb 0EEh,022h,044h,088h,0EEh,000h
+defb 0CCh,088h,088h,088h,0CCh,000h
+defb 088h,088h,044h,044h,022h,000h
+defb 066h,022h,022h,022h,066h,000h
+defb 044h,0AAh,000h,000h,000h,000h
+defb 000h,000h,000h,000h,000h,0EEh
+defb 088h,044h,000h,000h,000h,000h
+defb 000h,066h,0AAh,0AAh,066h,000h
+defb 088h,0CCh,0AAh,0AAh,0CCh,000h
+defb 000h,066h,088h,088h,066h,000h
+defb 022h,066h,0AAh,0AAh,066h,000h
+defb 000h,044h,0EEh,088h,066h,000h
+defb 066h,044h,0EEh,044h,044h,000h
+defb 000h,066h,0AAh,066h,022h,0CCh
+defb 088h,0CCh,0AAh,0AAh,0AAh,000h
+defb 044h,000h,044h,044h,044h,000h
+defb 022h,000h,022h,022h,0AAh,044h
+defb 088h,0AAh,0CCh,0AAh,0AAh,000h
+defb 044h,044h,044h,044h,022h,000h
+defb 000h,0CCh,0EEh,0EEh,0AAh,000h
+defb 000h,0CCh,0AAh,0AAh,0AAh,000h
+defb 000h,044h,0AAh,0AAh,044h,000h
+defb 000h,0CCh,0AAh,0CCh,088h,088h
+defb 000h,066h,0AAh,066h,022h,022h
+defb 000h,066h,088h,088h,088h,000h
+defb 000h,066h,0CCh,022h,0CCh,000h
+defb 044h,0EEh,044h,044h,022h,000h
+defb 000h,0AAh,0AAh,0AAh,066h,000h
+defb 000h,0AAh,0AAh,044h,044h,000h
+defb 000h,0AAh,0EEh,0EEh,044h,000h
+defb 000h,0AAh,044h,044h,0AAh,000h
+defb 000h,0AAh,0AAh,066h,022h,0CCh
+defb 000h,0EEh,022h,044h,0EEh,000h
+defb 022h,044h,0CCh,044h,022h,000h
+defb 044h,044h,000h,044h,044h,000h
+defb 088h,044h,066h,044h,088h,000h
+defb 022h,088h,044h,000h,000h,000h
+defb 000h,000h,000h,000h,000h,000h

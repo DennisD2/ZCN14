@@ -1,0 +1,25 @@
+Using ZCN on an NC200
+---------------------
+
+You should *not* normally run `zcn.bin' on an NC200, run `zcn200.bin'
+instead - if you don't, some programs such as `bbcbas' and `runrom'
+will crash. See zcn.txt's installation guide for more on installing
+zcn200.bin.
+
+`bigrun' and `zcnpaint' don't work on the NC200 - they will just
+immediately exit.
+
+`invaders' doesn't have a visible/usable display on the NC200.
+
+`zdbe' will only use 10 lines of the display.
+
+`ted200' and `bs200' should be used rather than `ted' and `bs' -
+obviously they can be renamed if you prefer.
+
+While `bbcbas' and `bbcmin' are working on the NC200 as of ZCN 1.4,
+they haven't been tested much, and `bbcbas' lacks the copy cursor it
+would usually have.
+
+On the NC200, be sure to use the `light 0' command if you want to turn
+off the backlight. Otherwise, ZCN will always leave it on - which
+supposedly takes three times as much power as with it turned off.

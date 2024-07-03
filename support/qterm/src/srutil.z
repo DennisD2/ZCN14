@@ -1,0 +1,468 @@
+; srutil.z - utilities for file transfer
+
+.incl	"c:vars"
+
+.extern	kgettc			; kgettc - get a character for kermit - we
+kgettc:				; wait as prescribed by kermit's timint
+	ld	a,(timint)	; get the timeout
+				; fall into gettcp
+
+.extern	gettcp			; call gettoc, but save registers as we do so
+gettcp:
+	push	hl
+	push	de
+	push	bc
+	call	gettoc
+	pop	bc
+	pop	de
+	pop	hl
+	ret
+
+.extern	gettc3			; calls gettoc with a timeout of 3 seconds
+gettc3:
+	ld	a,4		; set up, and fall through
+
+.extern	gettoc			; gettoc - get a character, noting timeout.
+gettoc:				; enter with timeout (in seconds) in a, return
+				; char in a, carry set <=> timeout
+	ld	c,a		; seconds of timeout to c
+	push	bc
+	call	fstmc		; quick pre-check to make sure this has a
+	pop	bc		; chance of working at 38400
+	ret	nc
+gtlp:	push	bc
+	call	kbdcc		; character from kbd?
+	xor	'x' & 0x1f	; was it a ^X?
+	jr	nz,noab
+	ld	hl,(abortf)	; abort function set up?
+	ld	e,a
+	ld	d,a
+	ld	(abortf),de	; kill it whatever
+	ld	a,h
+	or	l
+	jr	z,noab		; nope - don't do anything
+	jp	(hl)		; go do the abort code
+noab:	pop	bc
+	ld	de,1100
+	call	setspd		; set delay value
+qrtrms:	push	hl
+	push	bc
+	call	fstmc		; check for a char at the modem
+	pop	bc
+	pop	hl
+	ret	nc		; yes - send it back
+	ld	b,60		; wait a while
+qmslp:	djnz	qmslp
+	dec	hl
+	ld	a,h
+	or	l
+	jr	nz,qrtrms	; count down hl
+	dec	c
+	jr	nz,gtlp		; and seconds
+	scf			; timed out - return w/ carry
+	ret
+
+fstmc:	call	modist		; modem character available?
+	scf
+	ret	z		; return with carry if not
+	call	modin		; get one if so
+	or	a		; and clear carry
+	ret
+
+.extern	flsrng
+flsrng:	call	fstmc		; get a char if there's one there
+	jr	nc,flsrng	; loop while they're coming
+	ret			; exit - all flushed
+
+.extern	srnxt			; get next name from batched list for send
+srnxt:
+	call	nxtnam		; get next name from buffer to fcb
+	ret	z		; all done - return zero
+	call	xferax		; move fcb from fcb to auxfcb
+	ld	de,auxfcb
+	push	de		; get and save it's address
+	ld	c,open
+	call	usrbds		; try to open the file
+	ld	h,l
+	pop	de
+	add	a,a		; test a == -1 this way so we get a carry on
+	sbc	a,a		; failure
+	ret	nz		; open failed - return now
+	push	de
+	ld	c,cfsize
+	call	usrbds		; how big is it?
+	ld	de,(auxfcb + 34)
+	dec	de
+	ld	a,d
+	and	e
+	inc	a		; was de dec'ed from 0 to 0xffff
+	ld	a,(auxfcb + 36)
+	jr	nz,aok
+	dec	a		; drop a by 1 if so (big file!)
+aok:	ld	b,3
+mulk:	rra			; convert 128 byte blocks to K
+	rr	d
+	rr	e		; shift right
+	djnz	mulk
+	inc	de		; reset de - we ditch what's left in a
+	pop	hl		; fcb back to hl
+	call	prfile		; print file
+	xor	a		; clear carry
+	inc	a		; and z flag
+
+.extern	clrw2
+clrw2:
+	ld	(onekp),a
+	ld	hl,(w2ptr)
+	ld	(endw2),hl	; set pointers so reads from getw2c work
+	ret
+
+.extern	getw2c			; get a character from work2, via fcb at
+getw2c:				; auxfcb, return c on eof
+	ld	de,(w2ptr)	; get current read pointer
+	ld	hl,(endw2)
+	or	a
+	sbc	hl,de		; compare with end of data
+	ld	hl,work2 - 1
+	jr	z,fillw2	; at end of buffer - go fill it up again
+	sbc	hl,de		; see how far down buffer we are
+	ld	a,h
+	and	3
+	or	l		; on a K boundary?
+	push	de
+	jr	nz,no1k
+	ld	a,(onekp)	; printing k?
+	ld	(kcnt),a
+no1k:	ld	hl,b7flag	; zapping bit 7?
+	ld	a,(hl)		; get the mask
+	pop	hl
+	and	(hl)		; mask a character (and clear the carry)
+	inc	hl
+	ld	(w2ptr),hl	; resave new pointer
+	ret
+fillw2:	ld	a,(btxf)
+	ld	b,a
+	inc	hl
+	ld	(w2ptr),hl	; get dma address & reset read pointer
+filw2l:	push	bc
+	push	hl
+	ex	de,hl
+	ld	c,setdma
+	call	bdos		; set dma
+	ld	de,auxfcb
+	ld	c,read
+	call	usrbds		; read
+	pop	hl
+	pop	bc
+	or	a
+	jr	nz,filled	; eof - exit now
+	ex	de,hl
+	ld	hl,lbrcnt
+	inc	(hl)		; .LBR active?
+	jr	z,cntok		; nope, don't check
+	dec	(hl)		; adjust count
+cntok:	dec	(hl)
+	ld	hl,128
+	add	hl,de		; bump dma
+	jr	z,filled	; exit if all done
+	djnz	filw2l		; loop till count runs out
+filled:	ld	(endw2),hl	; save end pointer
+	ld	de,work2
+	or	a
+	sbc	hl,de		; anything in buffer?
+	ccf
+	ret	z		; return with carry if not
+	jr	getw2c		; else jump back & get a character
+
+.extern	gw2pb			; push a character back onto work2
+gw2pb:
+	ld	hl,(w2ptr)	; get current read pointer
+	dec	hl		; decrease
+	ld	(hl),a		; and save character
+	ld	(w2ptr),hl	; restore pointer
+	ret
+
+.extern	putw2c			; output a character in a to file at auxfcb
+putw2c:				; update K count as needed
+	ld	hl,(w2ptr)
+	ld	(hl),a		; save the character
+	inc	hl
+	ld	(w2ptr),hl
+	ld	de,(ew2p)
+	sbc	hl,de
+	jr	z,wrtw2
+	ld	a,h
+	and	3
+	or	l
+	ret	nz
+	jr	jone_k
+wrtw2:	call	flshw2
+jone_k:	jp	one_k
+
+.extern	flshw2			; flush pending write to auxfcb
+flshw2:
+	ld	hl,(w2ptr)	; what is in buffer
+	ld	de,work2
+	ld	(w2ptr),de	; reset save pointer
+	or	a
+	sbc	hl,de		; see if anything there
+	ret	z		; no - stop right now
+	dec	hl
+	add	hl,hl
+	inc	h
+	ld	b,h		; convert bytes to 128 byte blocks in b
+flshlp:	push	bc
+	push	de
+	ld	c,setdma
+	call	bdos		; set dma address
+	ld	de,auxfcb
+	ld	c,write
+	call	usrbds		; write the data
+	pop	de
+	ld	hl,128
+	add	hl,de
+	ex	de,hl		; move dma pointer
+	pop	bc
+	djnz	flshlp		; loop till all written
+
+.extern	fill1a			; fill write buffer with 0x1a
+fill1a:
+	ld	hl,work2
+	ld	(w2ptr),hl
+	ld	de,work2 + 1
+	ld	bc,(cbfsiz)
+	ld	(hl),0x1a
+	ldir
+	ret
+
+; setlbr - getw2c is used to read text for a script. Under certain
+; circumstances we need to adjust auxfcb to read from a .LBR, so setlbr
+; does the necessary work
+
+.extern	setlbr
+setlbr:
+	ld	de,xbuff	; point at buffer to use
+	push	de		; save for later
+	ld	c,setdma
+	call	bdos		; set dma address
+	ld	de,auxfcb
+	ld	c,read
+	call	usrbds		; read a sector
+	or	a
+	scf
+	pop	de		; restore address
+	ret	nz		; return carry (i.e. error on eof)
+	ld	hl,lbrcnt
+	bit	7,(hl)		; first time through?
+	jr	z,scnlbr	; nope - go check the stuff
+	ld	a,(xbuff + 14)	; get directory size
+	ld	(hl),a		; save it away
+	jr	add32		; go move to first real entry
+scnlbr:	ld	a,(de)		; get first byte of this entry
+	or	a
+	jr	nz,add32	; no file here, move to next
+	push	de		; save pointer to sector in xbuff
+	inc	de		; point at .LBR filename entry
+	ld	hl,fcb + 2	; point at filename saved in fcb
+	ld	b,11		; 11 characters to check
+nchk:	ld	a,(de)
+	xor	(hl)		; did we match?
+	and	0x7f		; don't care about MS bit
+	jr	nz,add32p	; failed the match, try the next name
+	inc	hl
+	inc	de		; move pointers
+	djnz	nchk		; and loop
+	ex	de,hl		; swap .LBR directory pointer to hl
+	ld	e,(hl)
+	inc	hl
+	ld	d,(hl)		; get the starting index to de
+	inc	hl
+	ld	(auxfcb + 34),de ; save it in the fcb
+	ld	a,(hl)		; get the record count
+	ld	(lbrcnt),a
+	xor	a
+	ld	(auxfcb + 36),a	; zero fill top byte of auxfcb
+	ld	de,auxfcb
+	ld	c,redrnd
+	call	usrbds		; seek as needed
+	or	a		; any errors
+	pop	de		; clean up the stack
+	ret	z		; yeaaa - we got it - return w/ no carry
+	scf			; else set carry for error
+	ret
+add32p:	pop	de
+add32:	ld	hl,32
+	add	hl,de		; bump de by 32
+	ex	de,hl		; save result to de
+	ld	hl,xbuff + 0x80
+	sbc	hl,de		; end of sector?
+	jr	nz,scnlbr	; no - look for another
+	ld	hl,lbrcnt
+	dec	(hl)		; out of directory sectors?
+	jr	nz,setlbr	; no, back for another chunk
+	dec	(hl)		; turn off .LBR scans
+	scf			; carry for the error
+	ret
+
+; scnswl - parse a list of wildcard filenames into work buffer for subsequent
+; transmission
+
+.extern	scnswl			; generate list of filenames for batch send
+scnswl:
+	ld	de,work
+	ld	(fnbrpt),de
+	ld	(fnbspt),de	; set read and write pointers
+swloop:	call	byp		; look at next one
+	or	a
+	ret	z		; return when all done
+	call	scnwld		; parse the next selection
+	jr	swloop		; and try again
+
+.extern	cpmaux			; convert generic filename in (hl) to a
+cpmaux:				; cp/m fcb in auxfcb
+	push	hl		; save string
+	ld	hl,auxfcb + 2
+	ld	de,auxfcb + 3
+	ld	bc,10
+	ld	(hl),' '
+	ldir			; fill filename portion with spaces
+	ld	bc,(newusr)	; get receive drive and user
+	pop	de		; name string back to de
+	ld	hl,auxfcb + 10	; point hl at extent part of name
+	push	hl
+	ld	hl,auxfcb
+	ld	(hl),c		; save user in place
+	inc	hl
+	ld	(hl),b		; and the drive
+	inc	hl		; point at name part
+	ld	a,3		; 3 chars in extent
+	ex	af,af'		; in a'
+	ld	b,8		; 8 chars in name
+scanlp:	ld	a,(de)
+	inc	de		; get next char
+	cp	' '
+	jr	nz,nospc	; space gets changed to '-'
+	ld	a,'-'
+nospc:	or	a		; end of string?
+	jr	nz,more		; carry on going if not
+	pop	hl
+	ret
+more:	cp	'.'		; swap portions on a '.'
+	jr	z,swap
+	inc	b
+	dec	b		; any space left?
+	jr	z,scanlp	; no - loop back
+	cp	'?'
+	jr	z,scanlp	; ignore '?'
+	cp	'*'
+	jr	z,scanlp	; and '*'s
+	call	ucsa		; convert to upper case
+	ld	(hl),a		; finally got us a letter - save it away
+	inc	hl		; move pointer
+	dec	b		; keep count
+	jr	scanlp		; and keep going
+swap:	ex	(sp),hl		; swap pointer on top of stack
+	ld	a,b		; count to a
+	ex	af,af'		; swap w/ a'
+	ld	b,a		; back to b
+	jr	scanlp
+
+.extern	auxopn
+auxopn:
+	call	fill1a		; prepare buffer & reset pointer
+	ld	hl,auxfcb + 13
+	ld	de,auxfcb + 14
+	ld	bc,20
+	ld	(hl),b		; nuke out rest of fcb
+	ldir
+	ld	de,auxfcb
+	ld	c,open
+	push	de
+	call	usrbds		; open the file if we can
+	pop	de
+	inc	a
+	jr	z,fileok	; failed - create & we're done
+	ld	hl,genfn
+	inc	de
+	inc	de
+	ld	bc,11
+	ldir			; copy in "canned" filename
+mvnaml:	dec	hl
+	inc	(hl)		; keep filenames changing
+	ld	a,(hl)
+	cp	'9' + 1
+	jr	c,auxopn	; done - try this one
+	jr	nz,ckltr	; greater than '9', check if it's a letter
+	ld	(hl),'A'	; no - put in 'A' now
+ckltr:	cp	'Z' + 1		; used all the letters?
+	jr	c,auxopn	; no - back and try it
+	ld	(hl),'0'	; reset to '0' and try next character
+	jr	mvnaml
+fileok:	ld	c,create	; file doesn't exist - create it
+	call	usrbds
+	ld	a,(ymdmb)	; ymodem name incoming?
+	ld	de,-1
+	or	a
+	jr	z,nosiz		; no - don't print a size
+	ld	hl,(xbuff + 126); get the record count
+	ld	de,7
+	add	hl,de		; adjust
+	ld	b,3
+stok:	sra	h
+	rr	l		; divide by 8 to get K
+	djnz	stok
+	ex	de,hl
+nosiz:	ld	hl,auxfcb	; print filename from aux fcb
+	jp	prfile
+
+.extern	dnak			; call diag to complain about a NAK
+dnak:
+	call	diag
+	db	'NAK received\0'
+	ret
+
+.extern	dnum			; ..... a bad packet number
+dnum:
+	call	diag
+	db	'Bad packet number\0'
+	ret
+
+.extern	dtime			; ..... a timeout
+dtime:
+	call	diag
+	db	'Timeout error\0'
+	ret
+
+.extern	dcheck			; ..... a checksum error
+dcheck:
+	call	diag
+	db	'Checksum error\0'
+	ret
+
+.extern	dcrc			; ..... a crc error
+dcrc:
+	call	diag
+	db	'CRC error\0'
+	ret
+
+.extern	dtries			; ..... too many retries
+dtries:
+	call	diag
+	db	'Too many retries\0'
+	ret
+
+.dseg
+.extern	genfn
+genfn:	db	'--XFER--000'
+.extern	abortf
+abortf:	dw	0
+.extern	lbrcnt
+lbrcnt:	db	0xff
+
+.useg
+w2ptr:	ds	2
+endw2:	ds	2
+onekp:	ds	1
+.extern	ew2p
+ew2p:	ds	2
+

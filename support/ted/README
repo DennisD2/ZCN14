@@ -1,0 +1,44 @@
+This is TED - originally from https://github.com/hperaza/TED as
+git-cloned in Sep 2022, but modified slightly to only build for CP/M
+and to use ZCN control codes, in NC100/NC150 and NC200 versions -
+ted.com is for NC100/NC150, ted200.com is for NC200. (There's also
+tedvt.com for a VT100 serial console.)
+
+TED can read and write files larger than memory, but does need extra
+disk space while running (much like Wordstar) to do that. It creates a
+temporary file called simply editor.tmp, so be sure not to use that
+filename yourself.
+
+The way it works is likely to take some getting used to for most - if
+you were hoping for conventional page up/down keys or word wrap,
+you're in for a surprise. Still, the basics aren't hard to pick up.
+There is arguably some resemblance to vi conceptually, and it has some
+Wordstar-like keys. The most notable issues are probably the lack of a
+block copy/move directly in edit mode (using command mode for this
+feels very awkward), and the lack of any automatic word wrapping.
+
+I wrote a basic man page for it in ../../man/pages, see that for the
+very basics (or do "man ted" on ZCN with man.com and manpages.dat
+installed) - the original fuller documentation is in the docs
+directory here.
+
+If you want to build it yourself (you don't need to), the
+zsm4/cpm3link setup the modified Makefile uses is much like I used for
+my p3c80, so quoting the README for that:
+
+> zxcc - https://www.seasip.info/Unix/Zxcc/index.html
+> 
+> ZSM4 - https://github.com/hperaza/ZSM4
+> 
+> link.com from CP/M Plus - http://www.cpm.z80.de/download/yazecpm3.zip
+[...]
+> ZSM4 and link.com must be available to zxcc with the names zsm4.com
+> and cpm3link.com respectively, which you might be able to do with
+> something along these lines:
+> 
+>   sudo install -m 644 zsm4.com /usr/local/lib/cpm/bin80
+>   sudo install -m 644 link.com /usr/local/lib/cpm/bin80/cpm3link.com
+
+TED's original README remains in README.md.
+
+-Rus.

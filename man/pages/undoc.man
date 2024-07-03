@@ -1,0 +1,9 @@
+NAME
+	undoc - list of programs without man pages
+
+SYNOPSIS
+	Undocumented programs
+
+DESCRIPTION
+	No programs are known to lack man pages. The only reason this
+	man page still exists is to confirm that.

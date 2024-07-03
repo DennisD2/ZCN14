@@ -1,0 +1,30 @@
+NAME
+	zrx - XMODEM receive a file
+
+SYNOPSIS
+	zrx filename
+
+DESCRIPTION
+	XMODEM receive a file from the serial port. Normally you'd use
+	QTERM or a similar program for such a task, but there is one
+	situation in which most of these programs don't work properly;
+	when console I/O is redirected to the serial port. In this
+	situation, you can instead use zrx, as it does no console I/O
+	at all.
+
+	While zrx was originally intended to be used via serial, it
+	also works on the normal ZCN console. Given the small size of
+	the program, this can be useful in some circumstances.
+
+BUGS
+	There is no analogous `zsx' to send a file.
+
+	The XMODEM implementation is somewhat naive, and only supports
+	the old `checksum' method.
+
+	There is no abort key. To quit before it finishes, do a cold
+	boot of the ZCN in memory by turning the machine off, then
+	holding both shifts while turning it on again.
+
+SEE ALSO
+	qterm

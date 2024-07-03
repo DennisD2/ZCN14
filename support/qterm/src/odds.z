@@ -1,0 +1,658 @@
+; odds.z - code that has no place else to live
+
+.incl	"c:termcap"
+.incl	"c:vars"
+
+.var	slow	86		; should we slow down outgoing string
+
+.extern	prompt			; print an inline prompt then get a buffer
+prompt:				; full of data from the keyboard
+	ld	a,(prmpfl)	; see if we're in a chat script or not
+	or	a
+	jr	z,nochat	; no - do normal input
+	push	ix
+	pop	hl		; get string address to hl
+	ld	de,ipbuf
+	ld	bc,116		; reasonable amount to copy
+	ldir			; move it over, and we're done
+skipze:	pop	hl		; get string address - we have to skip over it
+skiplp:	inc	hl		; this relies on a non-empty string
+	ld	a,(hl)
+	or	a
+	jr	nz,skiplp	; skip till we reach the end
+	jp	(hl)		; and return to address in hl
+nochat:	call	dim		; set dim mode
+	ld	hl,crlfms
+	call	prtslp		; send a newline
+	pop	hl
+	call	prtslp		; print the prompt
+	push	hl
+	ld	de,ipbuf - 2	; point at where we'll read info
+	ld	a,e
+	ld	(de),a		; set count
+	ld	c,buffin
+	call	bdos		; read a line
+	ld	hl,ipbuf - 1
+	ld	e,(hl)		; get count actually input
+	ld	d,h
+	add	hl,de
+	inc	hl		; turn into a buffer pointer
+	ld	(hl),d		; and zero terminate input data
+
+.extern	crlf			; just print a newline
+crlf:
+	call	ilprt
+crlfms:	db	'\r\n'
+zero:	db	0
+	ret
+
+.extern	ilprt
+ilprt:	call	dim		; in line print - start by going dim
+	pop	hl		; get string address
+	call	prtslp		; out it goes
+	push	hl		; restore return address - fall into bright
+
+.extern	bright
+bright:	ld	a,(tcbits)
+	and	b_brite		; do we have a bright string?
+	ret	z
+	ld	hl,bflag	; currently bright?
+	ld	a,(hl)
+	dec	a
+	ret	nz		; yes, don't resend
+	ld	(hl),a
+	ld	hl,brites	; get address of bright string
+	jr	prtslx		; and send it
+
+.extern	dim
+dim:	ld	a,(tcbits)
+	and	b_dim		; do we have a dim string?
+	ret	z
+	ld	hl,bflag	; currently dim?
+	ld	a,(hl)
+	or	a
+	ret	nz		; yes, don't resend
+	inc	(hl)
+	ld	hl,dims		; get address of dim string
+	jr	prtslx
+
+.extern	dellin
+dellin:
+	ld	hl,dlstr	; get address of dellin string
+	jr	prtslx		; and send it
+
+.extern	inslin
+inslin:
+	ld	hl,ilstr	; get address of inslin string
+	jr	prtslx		; and send it
+
+.extern	cleol
+cleol:
+	ld	hl,ceol		; get address of cleol string
+	jr	prtslx		; and send it
+
+.extern	cleos
+cleos:
+	ld	hl,ceos		; get address of cleos string
+	jr	prtslx		; and send it
+
+.extern	clear
+clear:	ld	hl,clrs		; get address of clear string
+
+prtslx:	ld	a,h
+	ld	(optype),a
+	call	prtslp
+	xor	a
+	ld	(optype),a
+	ret
+
+.extern	prtslp
+prtslp:
+	call	clrpcp
+
+.extern	prtsl1
+prtsl1:
+	ld	a,(hl)
+	or	a
+	ret	z
+	inc	hl
+	push	hl
+	call	tabexp
+	pop	hl
+; for ^X to can a long directory, add a 'ret c' here
+	jr	prtsl1
+
+.extern	tabexp
+tabexp:
+	cp	'\n'
+	jr	nz,nonl
+	ld	a,79
+	ld	(pos),a
+	ld	a,'\n'
+nonl:	cp	'\r'
+	jr	nz,nocr
+	ld	a,0xff
+	ld	(pos),a
+	ld	a,'\r'
+nocr:	cp	'\t'
+	jr	z,tablp
+	call	prtopc
+	jr	chk80
+tablp:	ld	a,' '
+	call	prtopc
+	ld	a,(pos)
+	and	7
+	jr	nz,tablp
+chk80:	ld	hl,pos
+	ld	a,(hl)
+	xor	80
+	call	z,newlin
+	ret
+
+prtopc:	ld	c,a
+	ld	a,(optype)
+	or	a
+	ld	a,c
+	jp	nz,scrout
+	ld	hl,mode
+	ld	e,(hl)
+	push	hl
+	push	de
+	ld	(hl),lf_bit
+	call	opchar
+	pop	de
+	pop	hl
+	ld	(hl),e
+	ld	hl,pos
+	inc	(hl)
+	ret
+
+newlin:	ld	(hl),a		; set char count back to zero
+	inc	hl		; point at line count
+	inc	(hl)		; bump that too
+	ld	a,(hl)
+	xor	23		; 23 lines?
+	ret	nz		; return if not
+	ld	a,(pagerf)
+	or	a
+	ret	z		; and return if not paging
+	dec	(hl)		; set back to 22 in case we get a return
+	ld	hl,mmsg
+.dseg
+mmsg:	db	'[more]\0'
+.cseg
+	call	prtsl1		; print more message
+	call	kbdin		; get a character
+	ld	hl,cmstr
+.dseg
+cmstr:	db	'\r      \r\0'
+.cseg
+	cp	(hl)		; return?
+	jr	z,clrmor	; yes - just remove '[more]', linec is set
+	xor	'x' & 0x1f
+	jr	z,retcx		; special exit on a ^X
+	xor	a
+	ld	(linec),a	; else clear linc for a full page
+clrmor:	jp	prtsl1		; and remove the more message
+
+retcx:	call	prtsl1		; come here after a ^X - we remove the message
+	scf			; and return carry to flag the exit
+	ret
+
+.extern	clrpsp
+clrpsp:
+	db	0x3e		; makes a ld a,xx
+
+.extern	clrpcp
+clrpcp:
+	xor	a
+	ld	(pagerf),a
+	push	hl
+	ld	hl,0
+	ld	(pos),hl
+	pop	hl
+	ret
+
+.extern	mtprt			; a call to this is followed by inline coords.
+mtprt:				; and a string to be printed at the coords
+	pop	hl
+	ld	e,(hl)
+	inc	hl
+	ld	d,(hl)		; get moveto coordinates
+	inc	hl
+	push	hl		; save address of string
+	ex	de,hl		; coords to hl
+	call	moveto		; move to wherever
+	pop	hl		; restore string to hl
+	call	prtslp		; print it
+	jp	(hl)		; and return
+
+.extern	decob			; print number in l, by zeroing h
+decob:
+	ld	h,0		; clear h and fall through
+
+.extern	decout			; print number in hl in decimal
+decout:
+	push	de		; save running total
+	push	bc		; save char count
+	ld	bc,-10
+	ld	de,-1
+decou2:	add	hl,bc
+	inc	de
+	jr	c,decou2	; divide hl by 10
+	sbc	hl,bc		; reset because of overflow
+	ex	de,hl		; remainder to e, answer to hl
+	ld	a,h
+	or	l
+	pop	bc		; restore char count for next call
+	call	nz,decout	; answer non-zero: print recursively
+	ld	a,e		; get remainder
+	add	a,'0'
+	ld	c,a
+	push	bc
+	call	scrout		; print to screen as a digit
+	pop	bc
+	dec	b		; keep count of printed chars in b
+	pop	de		; restore total
+	ret
+
+.extern	break
+break:
+	call	tenth		; wait a while before beginning
+	call	sbreak		; start the break
+	call	tenth3		; idle for 3/10 of a second
+	jp	ebreak		; finish off by ending the break
+
+.extern	hangup
+hangup:
+	ld	hl,#dtroff
+	ld	a,(hl)
+	cp	0xc9		; return at dtroff => no code
+	jr	z,strhup	; so send a string instead
+	call	dtroff		; drop dtr - should make modem hang up
+	call	tenth3
+	call	tenth3		; wait a (long) while
+	jp	dtron		; dtr back on
+strhup:	ld	ix,hangup - slow
+	inc	hl
+	ld	b,(hl)		; get the string length
+	inc	hl
+	jp	sendcs		; and out it goes
+
+tenth3:	call	tenth
+	call	tenth
+
+.extern	tenth			; delay for 1/10 of a second, but continue to
+tenth:				; save incoming chars
+	ld	de,100
+	call	setspd		; get speed constant to hl
+tnthlp:	ld	b,60
+tnthl1:	djnz	tnthl1		; idle a while
+	push	hl
+	call	savrng		; check incoming chars, but only as far as
+	pop	hl		; the ring buffer
+	dec	hl		; count main timer
+	ld	a,h
+	or	l
+	jr	nz,tnthlp
+	ret
+
+.extern	tnthip			; delay for 1/10 of a second, but continue to
+tnthip:				; check the modem for incoming chars
+	ld	de,100
+
+.extern	msip			; delay for de msec, but continue to
+msip:				; check the modem for incoming chars
+	ld	a,d
+	or	e		; anything in de?
+	ret	z		; nope - return right now
+	call	setspd		; get speed constant to hl
+msil:	ld	b,60
+msl2:	djnz	msl2		; idle a while
+	push	hl
+	call	lstmod		; process incoming chars and printer output
+	pop	hl
+	dec	hl		; count main timer
+	ld	a,h
+	or	l
+	jr	nz,msil
+	ret
+
+.extern	setspd			; take 1MHz value in de, get correct value in
+setspd:				; hl based on cpu speed
+	ld	hl,0
+	ld	a,(speed)
+	ld	b,a		; get cpu speed to b
+spdok:	add	hl,de		; multiply de by b
+	djnz	spdok
+	ret
+
+.extern	help
+help:
+	call	crlf		; start off with a new line
+	call	dim		; and dim
+	call	presc		; print the escape character
+	or	a		; test the flag
+	ld	c,' '
+	call	z,scrout	; print a space if no '^'
+	call	ilprt		; and finish off
+	db	'  - Transmit escape character\t      '
+	db	'?   - Print this help\r\n'
+	db	'.   - Send a break\t\t\t'
+	db	',   - Hang up modem\r\n'
+	db	'B   - Change baud rate and mode\t\t'
+	db	'C   - Open an input catch file\r\n'
+	db	'D   - Display local directory\t\t'
+	db	'E   - Toggle remote echo\r\n'
+	db	'H   - Toggle half duplex\t\t'
+	db	'I   - Print settings information\r\n'
+	db	'J   - Junk control characters\t\t'
+	db	'K   - Load a function key\r\n'
+	db	'L   - Toggle linefeed transmit for \'P\'\t'
+	db	'M   - Toggle bit 7 mask\r\n'
+	db	'N   - Select new default drive / user\t'
+	db	'O   - Toggle output to printer\r\n'
+	db	'P   - Print a file to remote\t\t'
+	db	'Q   - Quit\r\n'
+	db	'R   - Receive a file using protocol\t'
+	db	'S   - Send a file using protocol\r\n'
+	db	'T   - Type a local file\t\t\t'
+	db	'U   - Invoke user function\r\n'
+	db	'V   - Toggle VT100 Emulation\t\t'
+	db	'W   - Toggle split window mode\r\n'
+	db	'X   - Activate a chat script\t\t'
+	db	'Y   - Put catch file on hold\r\n'
+	db	'Z   - Close catch file\t\t\t'
+	db	'0-9 - Send function key string\r\n'
+	db	0
+	ret
+
+.extern	info			; print current settings
+info:
+	call	ilprt
+	db	'\r\nEscape character:\t\0'
+	call	dim
+	call	presc		; print the escape character
+	call	ilprt
+	db	'\r\nCurrent drive / user:\t\0'
+	call	dim
+	ld	hl,(curusr)	; get the current drive & user
+	ld	a,h
+	add	a,'A'		; convert drive to a letter
+	ld	c,a
+	push	hl
+	call	scrout		; print the drive
+	pop	hl
+	call	decob		; and print the user in l
+	call	ilprt
+	db	':\r\n\0'
+	ld	a,(rate)
+	cp	' '
+	jr	z,norate
+	call	ilprt
+	db	'Baud rate:\t\t\0'
+	call	dim
+	ld	hl,rate
+	call	prtslp
+norate:	ld	a,(modsav)
+	cp	' '
+	jr	z,nomode
+	call	ilprt
+	db	'Communication Mode:\t\0'
+	call	dim
+	ld	hl,modsav
+	call	prtslp
+nomode:	call	ilprt
+	db	'^S delay:\t\t\0'
+	call	dim
+	ld	hl,(csdely)	; get the delay count
+	call	decob		; out it goes
+	call	ilprt
+	db	' second(s)\r\nHalf duplex:\t\t\0'
+	ld	a,(hflg)
+	call	onoff		; say whether HDX is on or off
+	call	ilprt
+	db	'Local echo:\t\t\0'
+	ld	a,(eflg)
+	call	onoff		; say what local echo is up to
+	call	ilprt
+	db	'Control char. discard:\t\0'
+	ld	a,(jflg)
+	call	onoff		; say what local echo is up to
+	call	ilprt
+	db	'Linefeed in \'P\':\t\0'
+	ld	a,(lflg)
+	call	onoff		; line feed in print
+	call	ilprt
+	db	'Character delay:\t\0'
+	call	dim
+	ld	hl,(chd)	; get the character delay
+	call	decob		; out it goes
+	call	ilprt
+	db	' msec. \0'
+	ld	a,(ecflg)
+	or	a
+	jr	z,noeci
+	call	ilprt
+	db	'\techo check\0'
+noeci:	call	ilprt
+	db	'\r\nNew line delay:\t\t\0'
+	call	dim
+	ld	hl,(nld)	; new line delay is a word
+	call	decout
+	call	ilprt
+	db	' msec. \0'
+	ld	a,(lfecho)
+	or	a
+	jr	z,nolfe
+	push	af
+	call	ilprt
+	db	'\tnewline echo: \'\0'
+	call	dim
+	pop	af
+	ld	c,a
+	call	scrout
+	ld	c,'\''
+	call	scrout
+nolfe:	call	ilprt
+	db	'\r\nBit 7 masking:\t\t\0'
+	ld	a,(bmask)
+	inc	a
+	call	onoff		; say what bit 7 masking is up to
+	call	ilprt
+	db	'VT100 emulation:\t\0'
+	ld	a,(vflg)
+	call	onoff		; and vt100 emulation
+	call	ilprt
+	db	'Printer output:\t\t\0'
+	ld	a,(oflg)
+	call	onoff		; and printer output
+	ld	a,(cflg)
+	or	a
+	jr	nz,isctch	; catch file active?
+	call	ilprt		; if not then say so
+	db	'Not catching\r\n\0'
+	ret
+isctch:	call	ilprt
+	db	'Current catch file:\t\0'
+	call	dim
+	ld	hl,cfcb
+	call	prtfl		; otherwise print the filename
+	ld	a,(cflg)
+	dec	a
+	jp	z,crlf		; if active we're done
+	call	ilprt		; else say it's on hold
+	db	'  (on hold)\r\n\0'
+	ret
+
+onoff:	or	a		; is the flag active
+	jr	z,proff		; jump if not
+	call	ilprt
+	db	'on\r\n\0'	; say it's on
+	ret
+proff:	call	ilprt
+	db	'off\r\n\0'	; or say it's off
+	ret
+
+.extern	presc
+presc:
+	ld	b,0
+	ld	a,(escval)	; get the escape character
+	cp	' '
+	jr	c,prthat	; it's a control char - print the ^
+	cp	0x7f
+	jr	nz,nohat	; also do that for deletes
+prthat:	ld	c,'^'
+	push	af		; save the escape val
+	call	scrout		; print the ^
+	pop	af
+	ld	b,64		; flag we printed the ^
+	xor	b		; and "uncontrollify" the char
+nohat:	ld	c,a
+	push	bc		; save flag
+	call	scrout		; print the char
+	pop	af		; flag back to a
+	ret
+
+.extern	quit
+quit:
+	call	cclose		; close catch file if open
+	ld	hl,23 * 256	; blh corner of screen
+	call	moveto		; go there
+	call	exit		; call custom unwind code
+	rst	0		; exit to cp/m
+
+.extern	conin			; get char from function key or keyboard
+conin:
+	ld	a,(fkdely)	; check if we need to delay
+	or	a
+	call	nz,tnthip	; idle a while if we do
+	ld	hl,(fkptr)
+	ld	a,(hl)		; get the next char
+	inc	hl
+	ld	(fkptr),hl	; save revised pointer
+	ret			; char is in a
+
+.extern	ctls
+ctls:
+	ld	a,(lxoff)	; get local xon / xoff status
+	or	a
+	ld	a,(cschr)
+	call	nz,modopc	; send the xoff if needed
+	ld	a,(csdely)
+	or	a
+	ret	z		; if it's zero, return right now
+	ld	b,a		; get the delay value
+	add	a,a
+	add	a,a
+	add	a,b
+	add	a,a		; * 10
+	ld	b,a		; to b
+waitlp:	push	bc
+	call	tenth		; wait a while
+	pop	bc
+	djnz	waitlp
+	ret
+
+.extern	gotxon			; flag that an xon was sent from the kbd,
+gotxon:				; so we don't re-send
+	ld	(lxoff),a	; set the local xoff flag
+	ret
+
+.extern	gotxof			; flag that an xof was sent: this just clears
+gotxof:				; the flag set in gotxon
+	ld	hl,lxoff
+	ld	(hl),0
+	ret
+
+.extern	areabp			; areabp used in chat scripts: point at first
+areabp:				; non-white in text of a '!' command
+	ld	hl,area	- 1	; point at chat parse area and fall into byp
+
+.extern	incbyp
+incbyp:				; inc hl, and then byp
+	inc	hl
+
+.extern	byp			; step over spaces in string pointed to by hl
+byp:
+	ld	a,(hl)
+	cp	' '
+	ret	nz		; return on the first char that is NOT a space
+	inc	hl
+	jr	byp
+
+.extern	ldfnk			; this will prompt and then use the string
+ldfnk:				; to program one of the 10 function keys
+	ld	hl,zero		; point the readback pointer at a zero
+	ld	(fkptr),hl	; in case we change the string under it
+	call	prompt
+	db	'Key value: \0'	; get the string
+	ld	hl,ipbuf
+	call	byp		; strip spaces
+	or	a
+	ret	z		; skip if nothing to do
+	cp	'\e'
+	ret	z		; or if an escape typed
+	ld	c,0		; clear c (will become slow/fast flag)
+	sub	'0'
+	cp	10
+	jr	c,fast		; 0-9: is a fast, key index in a
+	ld	c,a		; non-digit: save a non-zero in c
+	inc	hl
+	ld	a,(hl)		; get the next character
+	sub	'0'		; and turn it into an index
+fast:	cp	10
+	jr	c,fnkok		; check it's ok
+	call	ilprt		; complain and return if not
+	db	'Invalid function key number\r\n\0'
+	ret
+fnkok:	inc	hl		; point at string to be parsed
+	push	hl		; save input string address
+	add	a,a
+	add	a,a
+	add	a,a
+	add	a,a		; turn index into table offset
+	ld	e,a
+	ld	d,0		; goes in de
+	ld	hl,fktbl
+	add	hl,de		; get table entry address
+	ld	(hl),c		; save speed flag
+	inc	hl
+	ex	de,hl		; string target address to de
+	pop	hl		; text back to hl
+	ld	bc,14 << 8	; 14 chars, zero byte delimits
+	jp	parst		; go parse the string, and we're done
+
+.extern	cbios			; call the entry point in the bios witn number
+cbios:				; in a, saving ix and iy as we go
+	push	ix
+	push	iy
+	call	#bios
+	pop	iy
+	pop	iy
+	ret
+
+#bios:				; offset is in a
+	ld	hl,(1)		; get the warm boot value to hl
+	ld	l,a		; modify with function number
+	jp	(hl)		; go do the code
+
+.dseg
+optype:	db	0
+bflag:	db	0
+.extern	lxoff
+lxoff:	db	1
+.extern	prmpfl
+prmpfl:	db	0
+.extern	fkptr
+fkptr:	dw	zero
+
+.useg
+pos:	ds	1
+linec:	ds	1
+pagerf:	ds	1
+.extern	fkdely
+fkdely:	ds	1
+.extern	fktbl
+fktbl:	ds	16 * 10
+

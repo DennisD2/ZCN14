@@ -1,0 +1,507 @@
+;ncspeed - NC100/150/200 ROM/RAM-based memory tester
+;
+;Public domain by Russell Marks, 2022
+
+;Based on an old NC100-only ROM-test-only version from the 90s, which
+;I don't think I released at the time.
+;
+;The COM file is quite bulky as this pulls in a bunch of zcnlib stuff
+;to handle options and 32-bit maths.
+
+;Testing the real NC100 (back in the 90s) showed that running NOPs in
+;ROM gives an effective Z80 speed of roughly 4.6MHz. I think I
+;eventually settled on my 4.606MHz claim after many runs, but I have
+;since wondered just how accurate that testing really was. Which is
+;partly why I did ncspeed.
+
+;ncspeed works by looping over 8k of NOPs in either ROM or RAM, 9000
+;times. With interrupts off this takes roughly 64 seconds on real
+;hardware. Since we measure duration using the RTC, elapsed time can
+;only be measured to the nearest second, and there will be some
+;variation in where the second transitions fall. So a single run is
+;not as accurate as you might hope, and you really need to average
+;multiple runs to get a decent result.
+;
+;The test can be done with interrupts enabled or disabled. Disabled is
+;the usual setting, for CPU speed measurement. Enabled is not usually
+;useful - but it does let you test how OS interrupt overhead affects
+;speed, when compared with the ints-off baseline.
+;
+;Precision is limited by:
+;- the RTC giving time only to the second
+;- number of loops
+;- the ROM test running in RAM about 0.16% of the time
+;- minimal program and ZCN syscall overhead at start/end
+;- general RTC timing accuracy
+;- potentially, the NC200's RTC requiring a UIP wait (<1ms)
+;
+;The RTC to-the-nearest-second-only timing is the main issue, but it's
+;the only option which allows having interrupts off, which we really
+;do want for a CPU test.
+
+;NB: The reason for testing ROM vs. RAM is to eliminate any memory
+;contention as an overhead. That doesn't seem to be a thing with this
+;test as-is, ROM and RAM appear to be the same speed. This also
+;explains why I added the screen-memory test, as an extra check for
+;any memory contention in active screen memory.
+
+
+org 0100h
+
+;test for ZCN
+ld a,(066h)
+cp 0f7h
+ret nz
+
+;better ZCN check
+ld c,128
+call 5
+inc a
+ret z
+
+ld sp,04000h
+
+call getargs
+call findrom0
+call scrnon
+call setuptest
+call dotime
+call runtest
+call dotime
+call showdiff
+
+;falls through
+
+;used for any exits after first "intsoff" call (in findrom0)
+exit:
+call intson	;fix ints/NMI/page if needed
+
+;no "scrnoff" needed, ZCN will reset the screen location, as far back
+;as version 0.1.
+rst 0
+
+
+;option flags
+ramtest: defb 0
+keepints: defb 0
+doscreen: defb 0
+
+
+rompage: defb 0
+selpage: defb 0
+gotime: defw 0
+
+nopsaddr equ 06000h
+
+
+include ../zcnlib/args.z
+include ../zcnlib/getopt.z
+include ../zcnlib/string.z
+include ../zcnlib/ctype.z
+include ../zcnlib/maths.z
+include ../zcnlib/int32.z
+
+
+;option string
+optstr:	defb 'ahis',0
+
+getargs:
+xor a
+ld (ramtest),a
+ld (keepints),a
+ld (doscreen),a
+
+call makeargv
+
+optloop:
+ld hl,optstr
+call getopt
+
+cp 255
+ret z
+
+cp 'a'
+jr nz,ga1
+ld (ramtest),a
+ga1:
+
+cp 'h'
+jr z,usage
+
+cp 'i'
+jr nz,ga2
+ld (keepints),a
+ga2:
+
+cp 's'
+jr nz,ga3
+ld (doscreen),a
+ld (ramtest),a
+ga3:
+
+cp '?'
+ret z
+jr optloop
+
+usage:
+ld de,musage
+ld c,9
+call 5
+;ok to just warm boot for exit at this point
+rst 0
+
+musage:
+defb 'ncspeed [-ahis]',13,10
+defb ' -a  test RAM not ROM',13,10
+defb ' -h  this usage help',13,10
+defb ' -i  interrupts on during test',13,10
+defb ' -s  screen = test area, forces RAM test and will blank the screen$'
+
+
+
+;not just di, as it includes NMI
+intsoff:
+di
+ld a,0c9h
+ld (066h),a
+ret
+
+;restores ints, NMI, RAM page
+intson:
+ld a,041h
+out (011h),a
+
+ld a,0f7h
+ld (066h),a
+ei
+ret
+
+
+
+;Looks for 8k of zeroes in the second half of a ROM page. This is
+;available on most NC100/150/200 ROMs.
+findrom0:
+;find zeroes in second half of a ROM page
+;we test ROM as if it's 512k, even if it's really 256k
+call intsoff
+
+ld c,0
+fr0lp:
+ld a,c
+out (011h),a
+
+ld hl,06000h
+fr0lp2:
+ld a,(hl)
+and a
+jr nz,fr0skip
+inc hl
+bit 7,h
+jp z,fr0lp2
+
+;got one, save the page number
+ld a,c
+ld (rompage),a
+jr intson	;ret via that
+
+fr0skip:
+inc c
+ld a,c
+cp 32		;32*16=512
+jp c,fr0lp
+
+;if it somehow failed, force a RAM test instead
+ld a,1
+ld (ramtest),a
+
+jr intson	;ret via that
+
+
+mtrom: defb 'Testing in ROM, $'
+mtram: defb 'Testing in RAM, $'
+mioff: defb 'ints off$'
+mion: defb 'ints on$'
+mcrlf: defb 13,10,'$'
+
+
+;final setup for test, so it all happens before the first time-check;
+;also displays the "Testing" line.
+setuptest:
+;get message addr and memory page
+ld de,mtrom
+ld a,(ramtest)
+and a
+ld a,(rompage)
+jr z,rtskip
+
+ld de,mtram
+ld a,041h
+
+rtskip:
+;save ROM/RAM page for later
+ld (selpage),a
+
+;show testing ROM/RAM message
+ld c,9
+call 5
+
+;modify op at eiop (in runtest) to nop or ei
+ld de,mioff
+ld a,(keepints)
+and a
+jr z,rtskip2	;zero is helpfully a nop :-)
+
+ld de,mion
+ld a,0fbh	;ei
+
+rtskip2:
+ld (eiop),a
+
+;show ints off/on message, and crlf
+ld c,9
+call 5
+ld de,mcrlf
+ld c,9
+call 5
+
+;zero ram version of nops
+ld hl,nopsaddr
+ld de,nopsaddr+1
+ld bc,8192-1
+ld (hl),0
+ldir
+
+;put a ret after the 8k of NOPs
+ld a,0c9h
+ld (08000h),a
+ret
+
+
+;Actually run the test.
+;
+;This tries to do as little as possible before/after the loop,
+;but there is still some minor overhead - not just here, it's also in
+;dotime, in ZCN's time-read BDOS function, and the call instructions
+;which call the routines.
+;
+;At a guess, in total this probably adds less than 1k cycles. But on
+;the NC200 only, there is a chance there may be an extra <1ms added
+;for start and stop time-reads, due to RTC UIP delays. So a
+;pathological worst-case on NC200 might add about 10k cycles total,
+;which would still make less than 0.01% time difference.
+runtest:
+call intsoff
+
+;save MM/SS from start time
+ld hl,(timebuf1+4)
+ld (gotime),hl
+
+;page in relevant ROM/RAM
+ld a,(selpage)
+out (011h),a
+
+;enable (only) maskable ints early if testing with ints on
+eiop: defb 0	;modified to nop or ei
+
+;I chose 9000 times for this just because it's a nice round number
+;that ends up not taking too long. :-) This is effectively hardcoded
+;due to the maths elsewhere on the number of cycles it takes
+;(295371000, as below).
+ld bc,9000
+loop:
+;run 8192*4=32768 cycles in the memory page tested (the rest are in RAM)
+call 06000h	;17 for call and 10 for ret
+dec bc		;6
+ld a,b		;4
+or c		;4
+jp nz,loop	;10  - 51 total
+
+;so the loop does:
+; 294912000 cycles in ROM (assuming normal Z80 NOP of 4 cycles)
+; 459000 in RAM - about 0.16% of the time :-)
+; for a total of 295371000
+
+jp intson	;ret via that
+
+
+scrnon:
+ld a,(doscreen)
+and a
+ret z
+
+;if a RAM test is also selected, this will mean the test runs in
+;screen memory for roughly half of the time on the NC100/150, and
+;nearly all the time on the NC200.
+;(For a ROM test, it'll probably make no difference except for giving
+;you a blank screen during the test.)
+ld a,060h
+out (0),a
+ret
+
+
+mcount1:
+defb ' second RTC difference, for 295371000 non-int cycles, plus overhead.'
+defb 13,10,'$'
+
+;The 75kHz error claim is based on the difference made from the usual
+;64ish seconds for 9000 loops, taking a second more or less would
+;change the result by (a bit less than) 75kHz each way. To put it
+;another way, one run with ints off can only tell you that it's 4.6MHz
+;or thereabouts. Showing the calculation number to the last Hz is
+;purely to make the maths easier to do, which is why I have the note
+;on possible error.
+mcount2:
+defb 'Hz effective Z80 speed +/- about 75000Hz.',13,10
+defb 'A single run has low precision, average many runs for better accuracy.$'
+
+
+;show diff in seconds between gotime and timebuf1
+showdiff:
+;uses mins/secs only
+;(which is all we saved for gotime)
+ld de,(gotime)
+call mmss2bin
+push hl
+
+ld de,(timebuf1+4)
+call mmss2bin
+
+pop de
+and a
+sbc hl,de
+jr nc,sdskip
+
+;if less, MMSS wrapped, need to add an hour to HL (i.e. 3600) to fix
+ld de,3600
+add hl,de
+
+sdskip:
+ex de,hl
+push de
+call dispdec
+
+ld de,mcount1
+ld c,9
+call 5
+
+;total from above = 295371000
+
+;entry: ixhl=x, debc=y
+ld ix,4507	;295371000/65536
+ld hl,248	;295371000%65536
+ld de,0
+pop bc
+call div32
+call dispdec32
+
+ld de,mcount2
+ld c,9
+jp 5		;ret via that
+
+
+
+;convert MM,SS BCD bytes in DE (E=MM, D=SS) to binary in HL
+mmss2bin:
+push de
+ld a,e
+call bcd2bin
+ld h,0
+ld l,a
+ld de,60
+call multiply
+
+pop de
+ld a,d
+call bcd2bin
+ld d,0
+ld e,a
+add hl,de
+ret
+
+
+;BCD in A to binary in A, based on code from zcnfunc.z
+;preserves HL
+bcd2bin:
+ld d,a
+and 0f0h	;high nibble starts at *16
+rrca
+ld e,a		;*8
+rrca
+rrca		;*2
+add a,e		;add them to get *10
+ld e,a
+ld a,d
+and 0fh
+add a,e		;add low nibble
+ret
+
+
+
+;adapted from ZCN utils/time.z
+
+timebuf1 equ 01000h
+timebuf2 equ timebuf1+6
+
+;read current date/time in usual YMDHMS fmt into timebuf1
+dotime:
+ld c,085h
+ld de,timebuf1
+call 5
+
+ld c,085h
+ld de,timebuf2
+call 5
+
+;now, if t1<t2 then t1:=t2
+
+ld ix,timebuf1
+ld b,6
+tchklp:
+ld a,(ix)
+cp (ix+6)
+jr c,uset2
+inc ix
+djnz tchklp
+
+jp dtskip
+
+uset2:
+ld hl,timebuf2
+ld de,timebuf1
+ld bc,6
+ldir
+
+dtskip:
+;if year byte is zero, the year indicated is 1990, so assume time
+;isn't set. This probably isn't truly a problem for our usage here,
+;but better safe than sorry.
+
+ld hl,timebuf1
+ld a,(hl)
+and a
+jp z,notime
+
+ret
+
+
+mnotime: defb 'No time set - use "timeset" to set the time.$'
+
+notime:
+ld de,mnotime
+ld c,9
+call 5
+jp 0
+
+
+;needed by string.z
+putchar:
+push bc
+push de
+push hl
+ld e,a
+ld c,2
+call 5
+pop hl
+pop de
+pop bc
+ret

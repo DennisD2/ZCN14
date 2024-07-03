@@ -1,0 +1,3 @@
+VT100	equ	TRUE
+ZCN	equ	FALSE
+ZCN200	equ	FALSE

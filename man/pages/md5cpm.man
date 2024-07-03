@@ -1,0 +1,39 @@
+NAME
+	md5cpm - md5sum for CP/M and ZCN
+
+SYNOPSIS
+	md5cpm [files]
+
+DESCRIPTION
+	md5cpm computes an MD5 message digest compatible with other
+	implementations, such as "md5sum" from GNU coreutils. The
+	output can be used as essentially a fancy checksum for files,
+	but with a much lower risk of failing to detect a corrupted
+	file than with a simple checksum or CRC.
+
+OPTIONS
+	files		files to check
+
+	Wildcards like "*.*" are supported, as is output redirection -
+	to redirect output to the file foo, use ">foo".
+
+BUGS
+	md5cpm always just shows the result for each file. There is no
+	equivalent of md5sum's "-c" option to check against previous
+	results, you must do so manually or with another program.
+
+	It's compiled with Hitech C, and is slow and large.
+
+	As CP/M 2.2 and ZCN's files are always a multiple of 128 bytes
+	long, you can get misleading results if e.g. you transferred a
+	file from a computer that uses exact file sizes. So make sure
+	you're comparing what you think you're comparing. :-)
+
+	md5cpm always reads files as binary, so if you convert the
+	line-endings on a text file it will differ. Also, anything
+	after a ^Z (soft EOF) is still counted as part of the file.
+
+AUTHOR
+	MD5 implementation by Solar Designer (Alexander Peslyak)
+
+	Tiny md5cpm frontend and Hitech C wrangling by Russell Marks

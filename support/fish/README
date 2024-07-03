@@ -1,0 +1,21 @@
+This is the BSD Unix game 'fish', hacked to compile under Hitech C.
+I've included an executable here as 'fish.com'. The game should work on any
+Z80-based CP/M box without modification.
+
+The instructions aren't displayed by the program as with the original;
+instead they're in a separate file, 'fishhelp.txt'. (Obviously, the
+same licence applies to that file as to fish.c.)
+
+
+I did the above in 1995 (adding fish-bds.c later) when the old
+4-clause licence applied. However, in 1999 the following announcment
+was made:
+
+"Effective immediately, licensees and distributors are no longer required to
+include the acknowledgement within advertising materials.  Accordingly, the
+foregoing paragraph of those BSD Unix files containing it is hereby deleted
+in its entirety."
+
+I applied this change to all relevant files here.
+
+-Rus.

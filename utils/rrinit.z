@@ -1,0 +1,285 @@
+;rrinit - format ZCN drive a: and write snapshot to it.
+;requires a card of at least 128k.
+
+org 0c210h
+
+txtoutput	equ 0b833h
+kmwaitkbd	equ 0b80fh
+padgetversion	equ 0b8deh
+cf1size		equ 6
+
+jp start
+defb 'RRINIT',0,0,0,0,0,0,0
+
+;c220h
+start:
+;make sure we can't be run again
+xor a
+ld (0c200h),a
+
+;check firmware version as a quick way of checking for NC100/150/200
+call padgetversion
+and a
+ld de,110	;assume 1.10 or greater means NC150/200
+sbc hl,de
+ld a,0
+jr c,skip1
+inc a
+skip1:
+ld (nc200ish),a	;must be 0 or 1
+
+;save the snapshot
+call do_snap
+
+;say it worked
+;can't use textout, do it char-by-char instead :-/
+ld hl,mworked
+displp:
+ld a,(hl)
+and a
+jr z,dispdone
+call txtoutput
+inc hl
+jr displp
+dispdone:
+
+keylp:
+call kmwaitkbd
+ld hl,02fch	;ESC (stop or function)
+and a
+sbc hl,bc
+jr nz,keylp
+
+;return to ROM main menu
+ret
+
+
+mworked: defb 'Snapshot written - press Stop',0
+
+;if this changes, fromdirblks needs to as well
+bootblks	equ 12
+
+nc200ish:	defb 0
+
+btblock:
+defb 0c9h,07eh,'ZCN1'
+defw 0		;size of card - must be filled in
+defb bootblks	;system blocks
+defb 2		;2 dir. blocks
+
+
+do_snap:
+di
+ld hl,066h
+ld a,(hl)
+ld (hl),0c9h
+ld (nmisav),a
+ld (spsav),sp
+
+;page in screen for a sec
+ld a,043h
+out (011h),a
+
+ld hl,2		;compensate for call to here
+add hl,sp
+ld (07000h),hl	;screen starts at 7000h
+
+ld sp,0c3feh
+
+ld a,(nmisav)
+ld (07002h),a
+
+;page card in
+ld a,080h
+out (011h),a
+
+;zero out first half of boot block
+;(not second half 'cos that's where we are :-))
+ld hl,04000h
+ld de,04001h
+ld bc,01ffh
+ld (hl),l
+ldir
+
+;copy skeletal boot block
+ld hl,btblock
+ld de,04000h
+ld bc,10
+ldir
+
+;(size-calculating code below based on `format' from ZCN's internal.z)
+
+;we now need to find out how big it is.
+;this is not fun. it seems that the PCMCIA memory ports allocated
+;(80h-BFh) all map to real memory on the card - any size card ends
+;up looking like a 1024k card, with the contents repeating every
+;<card size>. we have to use this to find out how big it is.
+;
+;we have a particularly convenient way of checking the card size,
+;since our code (at least the bit at c200h) should be unique.
+
+ld c,1		;port num. offset
+ld b,64		;max. possible size in 16k chunks
+ifmtlp2:
+push bc
+ld a,c
+and 63
+or 080h
+out (011h),a
+ld hl,04200h
+ld de,0c200h
+ld b,0
+ifmtlp3:
+ld a,(de)
+cp (hl)
+jr nz,ifmt4
+inc hl
+inc de
+djnz ifmtlp3
+;it matched ok
+pop bc
+ld a,c
+jr ifmt5
+
+ifmt4:
+pop bc
+inc c
+djnz ifmtlp2
+;no match - must be a 1024k card
+ld a,64
+
+ifmt5:
+;size of card in 16k chunks is now in a
+ld l,a
+ld h,0
+add hl,hl	;*2
+add hl,hl	;*4
+add hl,hl	;*8
+add hl,hl	;*16
+
+ld (0c000h+cf1size),hl
+
+;blank out dir entries.
+ld hl,dirblks
+ld de,dirblks+1
+ld bc,2048-1
+ld (hl),0e5h
+ldir
+
+;copy preset dir entries into place.
+ld hl,fromdirblks
+ld de,dirblks
+ld bc,128
+ld a,(nc200ish)
+and a
+jr z,skip2
+ld bc,256
+skip2:
+ldir
+
+;now actually copy the memory.
+;A is still (nc200ish)
+inc a	;now 1 for NC100, else 2
+rlca	;2 or 4
+rlca	;4 or 8
+ld b,a	;copy this many 16k pages for 64k or 128k
+ld c,0
+pagelp:
+push bc
+call pagecopy
+pop bc
+inc c
+djnz pagelp
+
+;finished with slots at 4000h/8000h now.
+;restore 8000h-bfffh first, so we can read b001h to find the other
+;page out! :-)
+ld a,042h
+out (012h),a
+ld a,(0b001h)
+out (011h),a
+
+ld sp,(spsav)
+ld a,(nmisav)
+ld (066h),a
+ei
+ret
+
+nmisav: defb 0
+spsav:  defw 0
+
+;copy page C
+pagecopy:
+ld a,c
+or 040h
+out (012h),a	;source is at 8000h
+
+ld a,c
+add a,081h	;81h because we start from second 16k of card, of course
+out (011h),a	;dest is at 4000h
+
+ld hl,08000h
+ld de,04000h
+ld bc,04000h
+ldir
+ret
+
+
+;fromdirblks gets copied here.
+dirblks		equ bootblks*1024+0c400h
+
+;2048-(128 or 256) bytes of E5h's are written here.
+dirnc1blank	equ dirblks+128
+dirnc2blank	equ dirblks+256
+
+;preset dir entries for runrom.ram.
+;These point to 64k starting from the 16k point on the card.
+;The NC100 gets 128 bytes of these copied, for a 64k file.
+;The NC150/200 get 256 bytes copied, for a 128k file.
+fromdirblks:
+;first 64k
+defb 000h,052h,055h,04Eh,052h,04Fh,04Dh,020h
+defb 020h,052h,041h,04Dh,000h,000h,000h,080h
+defb 003h,004h,005h,006h,007h,008h,009h,00Ah
+defb 00Bh,00Ch,00Dh,00Eh,00Fh,010h,011h,012h
+
+defb 000h,052h,055h,04Eh,052h,04Fh,04Dh,020h
+defb 020h,052h,041h,04Dh,001h,000h,000h,080h
+defb 013h,014h,015h,016h,017h,018h,019h,01Ah
+defb 01Bh,01Ch,01Dh,01Eh,01Fh,020h,021h,022h
+
+defb 000h,052h,055h,04Eh,052h,04Fh,04Dh,020h
+defb 020h,052h,041h,04Dh,002h,000h,000h,080h
+defb 023h,024h,025h,026h,027h,028h,029h,02Ah
+defb 02Bh,02Ch,02Dh,02Eh,02Fh,030h,031h,032h
+
+defb 000h,052h,055h,04Eh,052h,04Fh,04Dh,020h
+defb 020h,052h,041h,04Dh,003h,000h,000h,080h
+defb 033h,034h,035h,036h,037h,038h,039h,03Ah
+defb 03Bh,03Ch,03Dh,03Eh,03Fh,040h,041h,042h
+
+;second 64k
+defb 000h,052h,055h,04Eh,052h,04Fh,04Dh,020h
+defb 020h,052h,041h,04Dh,004h,000h,000h,080h
+defb 043h,044h,045h,046h,047h,048h,049h,04Ah
+defb 04Bh,04Ch,04Dh,04Eh,04Fh,050h,051h,052h
+
+defb 000h,052h,055h,04Eh,052h,04Fh,04Dh,020h
+defb 020h,052h,041h,04Dh,005h,000h,000h,080h
+defb 053h,054h,055h,056h,057h,058h,059h,05Ah
+defb 05Bh,05Ch,05Dh,05Eh,05Fh,060h,061h,062h
+
+defb 000h,052h,055h,04Eh,052h,04Fh,04Dh,020h
+defb 020h,052h,041h,04Dh,006h,000h,000h,080h
+defb 063h,064h,065h,066h,067h,068h,069h,06Ah
+defb 06Bh,06Ch,06Dh,06Eh,06Fh,070h,071h,072h
+
+defb 000h,052h,055h,04Eh,052h,04Fh,04Dh,020h
+defb 020h,052h,041h,04Dh,007h,000h,000h,080h
+defb 073h,074h,075h,076h,077h,078h,079h,07Ah
+defb 07Bh,07Ch,07Dh,07Eh,07Fh,080h,081h,082h
+
+
+;required to stop the xmodem transfer screwing up the last packet.
+defs 128
+defb 01ah

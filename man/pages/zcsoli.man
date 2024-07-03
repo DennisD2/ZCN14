@@ -1,0 +1,96 @@
+NAME
+	zcsoli - Solitaire/Patience/Klondike card game
+
+SYNOPSIS
+	zcsoli [termtype[-]]
+
+DESCRIPTION
+	zcsoli is a one-player card game, playing the game usually
+	called Solitaire, Patience, or Klondike. It uses the (easier)
+	1-card draw variant. It supports VT100, VT52, ADM-3A, and ZCN
+	control codes. This version defaults to a native NC100/NC150
+	or NC200 display.
+
+	Note that on NC100/NC150, the usual play area has to be split
+	in half, with what would normally be the upper half shown on
+	the left, and the lower half shown to the right of that. This
+	can be a bit confusing. And even on NC200, the play area is
+	slightly truncated.
+
+OPTIONS
+	termtype
+		select an alternative terminal type to use. On ZCN,
+		you'd probably only want to use this if output is
+		redirected to the serial port. The type is a single
+		digit - 0=ZCN (NC100), 1=VT100, 2=VT52, 3=ZCN (NC200),
+		4=VC404, 5=ADM-3A.
+
+	-	if "-" is specified then the onscreen instructions
+                aren't shown.
+
+GAMEPLAY
+	The aim of the game is to get all the cards in each suit onto
+	the matching ace pile, in ascending order (with aces low) from
+	ace to king. To help you do this, you can move cards
+	onto/between the seven main piles of cards which are dealt
+	when you start. Any face-up cards on those must be in
+	descending order (K, Q, J, 10, ... 2), and have alternating
+	red/black suit. When moving cards between the main piles, you
+	can only move entire runs (every face-up card on the pile).
+	When moving to a main pile which has no cards at all, you can
+	only move a king there (or the top card of the run you're
+	moving must be a king).
+
+	The main card piles are shown at the top (growing downwards),
+	with the deck (and turned-over cards from it) in the
+	bottom-left and the ace piles to the right of that. Initially
+	you can't see the ace piles, as you have to move an ace to
+	them before there'll be anything there.
+
+	The top of each card is indicated with two characters, the
+	first being a number or A/T/J/Q/K for ace/ten/jack/queen/king,
+	the second being H/D/s/c for hearts/diamonds/spades/clubs.
+	While no colour is used in the display, runs of cards can
+	easily be found just using the uppercase/lowercase display of
+	the different suits.
+
+COMMANDS
+	When the game runs, it initially prompts you to press a key to
+	continue. This is to help set up the random number generator.
+
+	Once the game starts, the keys are:
+
+	Enter (CR) - turn over a card from the top of the deck. If the
+	deck is empty, it flips the turned-over cards back onto the
+	deck first.
+
+	1 to 7, or D - pick a card (or run) to move from the numbered
+	pile or the deck (actually the topmost turned-over card). Once
+	you've pressed this first key, you then choose where to move
+	it, with 1 to 7 and A meaning either the numbered pile, or the
+	relevant ace pile. If you attempt a move which isn't allowed,
+	it'll be ignored.
+
+	Control-R - restart, abandoning the current game, and
+	reshuffle/deal from scratch.
+
+	Control-L - redraw the screen.
+
+	Control-C - exit the game.
+
+	If you win, you get a congratulatory message - press a key at
+	that point to start another game.
+
+BUGS
+	It is possible to end up with a pile large enough that you
+	can't see all the face-up cards on it.
+
+	While you've effectively won once all cards are face-up, the
+	game requires you to finish loading up the ace piles before it
+	will recognise it (partly because this is much faster to test
+	for). If you prefer, you could just restart or quit once all
+	cards are face-up.
+
+HISTORY
+	Based on the "soliyawn" 2002 Minigame Competition entry for the
+	Sinclair Spectrum, by the same author.

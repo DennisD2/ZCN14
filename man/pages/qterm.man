@@ -1,0 +1,43 @@
+NAME
+	qterm - quick terminal program
+
+SYNOPSIS
+	qterm [script]
+
+DESCRIPTION
+	QTERM is a terminal emulator and file transfer program
+	suitable for communication over the serial port.
+
+	This man page covers the basics at a simplified level; much is
+	omitted.
+
+OPTIONS
+	script		chat script (unlikely to be useful in ZCN)
+
+KEYS
+	^\ q		quit
+	^\ s		send file
+	^\ r		receive file
+	^\ v		toggle VT100 emulation
+
+	Send/receive will prompt for a protocol and filename. To
+	XMODEM transfer a file foo use "x foo". To use YMODEM batch
+	mode (which allows wildcards like *.*) use "xy foo" to send or
+	just "xy" to receive.
+
+	^\ (i.e. Control-\ or Function-\) can be a bit interesting to
+	get at on non-UK keyboard layouts, even after running `keyb'.
+	If the backslash appears on the top-right of the key cap,
+	you'll need to use both e.g. Function and Symbol with the key.
+
+BUGS
+	YMODEM batch can (rarely) use incorrect filenames; this is
+	related to ZCN and hardware issues, not a bug in QTERM itself.
+
+AUTHOR
+	David Goodenough
+
+SEE ALSO
+	rexec, sertest, zrx
+
+	support/qterm/qterm.doc (in ZCN distribution)

@@ -1,0 +1,15 @@
+NAME
+	format - format a logical drive
+
+SYNOPSIS
+	format d:
+
+DESCRIPTION
+	Formats the specified drive (if it exists), deleting any data
+	which may previously have been on it.
+
+	When formatting A: on a memory card, 12k is reserved for the
+	system, so that the card can be made bootable with `sys'.
+
+SEE ALSO
+	sys

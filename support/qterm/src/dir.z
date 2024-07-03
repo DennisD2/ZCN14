@@ -1,0 +1,144 @@
+; dir.z - print directories for qterm
+
+.incl	"c:vars"
+
+.extern	dir
+dir:
+	call	gauxfc		; get a fcb into auxfcb
+	ld	hl,auxfcb + 2
+	ld	a,(hl)		; get first actual character of filename
+	cp	' '
+	jr	nz,isfil	; not a space - there was something
+	ld	de,auxfcb + 3
+	ld	bc,10
+	ld	(hl),'?'	; else fill with '?'s to do *.*
+	ldir
+isfil:	ld	c,26
+	ld	de,auxlin
+	call	bdos
+	call	dim		; set dim mode
+	call	clrpsp		; set up to page output
+	ld	c,17
+	xor	a
+	ld	(nlp),a
+	push	af
+dslp:	ld	de,auxfcb
+	call	usrbds
+	inc	a
+	jr	z,dirxit
+	push	af
+	ld	a,(auxfcb + 1)	; get the drive code
+	add	a,'@'		; convert to a letter
+	call	tabexp		; and print it
+	ld	hl,(auxfcb)	; get the user number
+	call	decob		; print it too
+	ld	a,':'
+	call	tabexp		; and a colon
+	pop	af
+	rrca
+	rrca
+	rrca
+	ld	hl,auxlin - 31
+	ld	e,a
+	ld	d,0
+	add	hl,de
+	ld	b,8		; 8 chars filename
+	call	pdir		; print filename
+	ld	a,'.'
+	push	hl		; save fcb address
+	call	tabexp		; print a period
+	pop	hl
+	ld	b,3
+	call	pdir		; and print the extension
+	dec	hl
+	dec	hl
+	ld	a,(hl)		; let's see about R/O files
+	add	a,a
+	dec	hl
+	ld	a,(hl)
+	adc	a,a
+	adc	a,a		; get r/o and sys bits to bottom
+	ld	hl,rostr	; look at characters we have
+.dseg
+rostr:	db	' -+*'
+.cseg
+	and	3		; get just the bits we want
+	ld	e,a
+	ld	d,0
+	add	hl,de		; index into characters
+	ld	a,(hl)		; get one
+	call	tabexp		; and print it
+	pop	af
+	inc	a
+	push	af
+	and	3
+	ld	hl,sstr
+.dseg
+sstr:	db	'   \0'		; 3 spaces to separate
+.cseg
+	jr	nz,sepspc
+	ld	hl,crlfm
+sepspc:	call	prtsl1
+; for ^X to can a directory, add a 'jr c,dirxit' here
+ds18:	ld	c,18
+	jr	dslp
+
+dirxit:	pop	af		; restore file count
+	or	a
+	jr	z,nfm
+	and	3
+	call	nz,crlf		; print newline if needed
+	jp	bright		; otherwise restore bright mode
+nfm:	call	ilprt
+	db	'No files'
+crlfm:	db	'\r\n\0'	; complain if no files
+	ret
+
+; pdir - print chars from hl, count in b
+
+pdir:	ld	a,(hl)		; get next char
+	inc	hl
+	and	0x7f		; get rid of top bit
+	push	hl		; save regs
+	push	bc
+	call	tabexp		; print it
+	pop	bc
+	pop	hl
+	djnz	pdir		; loop till all done
+	ret
+
+; nxtnam - get next name from work to fcb, return z if no files left
+
+.extern	nxtnam
+nxtnam:
+	ld	hl,(fnbspt)	; get last address saved to
+	ld	de,(fnbrpt)	; current read address
+	or	a
+	sbc	hl,de		; test them
+	ret	z		; return z if equal
+	ex	de,hl		; read address to hl
+	ld	de,fcb		; fcb address to de
+	ld	bc,16		; 16 chars to go
+	ldir			; move them
+	ld	(fnbrpt),hl	; and save read pointer
+	ld	a,(fcb)		; get lead byte
+	cp	0xe5		; check for erasure
+	jr	z,nxtnam	; loop back if gone
+	ld	a,b
+	ld	(fcb + 13),a
+	ld	(fcb + 33),a	; zero out extent and block numbers
+	ret			; ret with no z flag
+
+; data area
+
+.useg
+.extern	newusr
+newusr:	ds	1		; new user for dir command
+.extern	newdrv
+newdrv:	ds	1		; new drive for dir command
+nlp:	ds	1		; number of lines on current page
+.extern	fnbspt
+fnbspt:	ds	2		; fnbuff save pointer
+.extern	fnbrpt
+fnbrpt:	ds	2		; fnbuff read pointer
+

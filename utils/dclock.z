@@ -1,0 +1,403 @@
+;dclock - simple clock
+;
+;This is a VERY tight fit into 1k, but I really want to keep it that
+;size.
+
+;uses ZCN's rst 28h call in places for convenience - fairly nasty I
+;s'pose, but hey, it's my OS and I'll write crocks if I want to. :-)
+
+
+org 0100h
+
+timebuf1	equ 09000h
+timebuf2	equ timebuf1+6
+timebuf3	equ timebuf2+6		;previous second (used by gettime)
+timebuf		equ timebuf1		;current second
+
+;addr in memory of digi clock onscreen
+timeloc		equ 0f000h+64*14+23
+
+;on NC200, a screen at 06000h is used. No paging happens, this is just
+;in the usual RAM layout.
+nc2scrn		equ 06000h
+
+;subtracted from NC100 screen address if on NC200
+nc200adj	equ 08800h+64*4
+
+;384-byte buffer used on NC200, to copy date bitmap
+tmpbuf		equ 09800h
+
+quit		equ quitop+1
+
+is_nc200	equ isnc2op+1
+
+
+
+;must be ZCN
+ld a,(066h)
+cp 0f7h
+ret nz
+
+;XXX doesn't test for serial/parallel console, to save space
+
+;stop them running it again with '!!'; it isn't re-entrant
+ld a,0c9h
+ld (0100h),a
+
+;abort if time isn't set
+call gettime
+ld a,(timebuf)
+and a
+jr z,notime
+
+;turn off cursor and clear screen
+rst 028h
+defb 4,1,0
+
+;check for NC200
+ld c,144
+call 5
+cpl
+ld (is_nc200),a
+and a
+jr z,skip1
+
+;so, on NC200. Zero out the screen.
+ld hl,nc2scrn
+ld de,nc2scrn+1
+ld bc,8192-1
+ld (hl),l	;L is zero, as HL must be a multiple of 8k
+ldir
+
+;and adjust Y position of date.
+;Can't mirror NC100 perfectly, alas.
+ld a,32+13
+ld (disptime+2),a
+
+;screen is selected frequently, so poweroff isn't really an issue.
+;It'll just reappear at the next redraw. The normal screen will have
+;the date but not the time, which is awkward but not too terrible.
+
+skip1:
+call gettime
+call do_colons	;draw digi clock's colons
+call disptime	;draw digital for this second
+
+loop:
+call waitsec	;wait for next second, get time, check for input
+call disptime	;display as digital
+
+quitop: ld a,0	;modified (set on esc)
+and a
+jr z,loop
+
+;clear screen and home cursor
+rst 028h
+defb 1,0
+
+;all done, warm boot
+;(cursor will be reenabled, and NC200 screen addr will be reset)
+rst 0
+
+
+notime:
+rst 028h
+defb 'Time?',0
+rst 0
+
+
+
+setscrn:
+isnc2op: ld a,0
+and a
+ret z
+
+;set screen address
+ld a,nc2scrn/256
+out (0),a
+
+;also copies date line to the screen actually being used
+di
+ld a,043h
+out (011h),a
+
+ld hl,13*6*64+06000h
+ld de,tmpbuf
+ld bc,384	;6 pixel lines
+push bc
+push hl
+push de
+ldir
+
+ld a,041h
+out (011h),a
+ei
+
+pop hl	;tmpbuf
+pop de	;13*6*64+06000h
+pop bc	;384
+ldir
+ret
+
+
+do_colons:
+;draw the digital clock's colons.
+ld hl,timeloc+4+3*64
+call nc2colon
+ld hl,timeloc+9+3*64
+;falls through
+
+nc2colon:
+call nc200fix
+call colondot
+ld de,10*64
+add hl,de
+;falls through
+
+colondot:
+ld de,64
+ld b,4
+cdotlp:
+ld (hl),00011100b
+add hl,de
+djnz cdotlp
+ret
+
+
+nc200fix:
+ld a,(is_nc200)
+and a
+ret z
+ld de,nc200adj
+sbc hl,de	;nc from the and
+ret
+
+
+;get current time into timebuf.
+;lifted from time.z
+gettime:
+ld c,085h
+ld de,timebuf1
+push de
+push de
+call 5
+
+ld c,085h
+ld de,timebuf2
+push de
+call 5
+
+;now, if t1<t2 then t1:=t2
+
+pop hl	;timebuf2
+pop ix	;timebuf1
+pop de	;timebuf1 also
+ld b,6
+tchklp:
+ld a,(ix)
+cp (ix+6)
+jr c,uset2
+inc ix
+djnz tchklp
+
+ret
+
+uset2:
+;hl is already timebuf2
+;de is already timebuf1
+ld bc,6
+ldir
+ret
+
+
+;display time (and date)
+disptime:
+;put cursor in place for local date/time
+;this is modified on NC200, and must be first thing here.
+rst 028h
+defb 16,32+8,32+55,0
+
+ld hl,timebuf
+ld a,(hl)
+add a,090h
+daa
+ld (hl),a
+;insert '20' or '19' as appropriate to give a four-digit year like
+; '1994'.
+push hl
+push af
+call c,prefix20
+pop af
+call nc,prefix19
+pop hl
+
+ld b,2
+datelp:
+ld a,(hl)
+call dispbcd
+ld a,'-'
+call putchar
+inc hl
+djnz datelp
+
+ld a,(hl)
+call dispbcd
+inc hl
+
+;now do the time using big digits.
+ld hl,timeloc
+call nc200fix
+ld de,timebuf+3
+ld b,3
+timelp:
+push bc
+push de
+push hl
+ld a,(de)
+and 15
+ld (timedigit2op+1),a
+ld a,(de)
+and 0f0h
+rrca
+rrca
+rrca
+rrca
+pop hl
+push hl
+call bigwrite
+pop hl
+inc hl
+inc hl
+push hl
+timedigit2op: ld a,0	;modified
+call bigwrite
+pop hl
+inc hl
+inc hl
+inc hl
+pop de
+pop bc
+inc de
+djnz timelp
+ret
+
+
+;display BCD in a as decimal
+dispbcd:
+push af
+rrca
+rrca
+rrca
+rrca
+and 15
+add a,48
+call putchar
+pop af
+and 15
+add a,48
+;falls through
+
+;putchar - put char in a
+;preserves all regs
+putchar:
+push af
+push bc
+push de
+push hl
+ld e,a
+ld c,2
+call 5
+pop hl
+pop de
+pop bc
+pop af
+ret
+
+
+prefix20:
+rst 028h
+defb '20',0
+ret
+
+prefix19:
+rst 028h
+defb '19',0
+ret
+
+
+;wait for next second
+;also checks for input and deals with it (this cuts short the wait).
+waitsec:
+call gettime
+ld hl,timebuf
+ld de,timebuf3
+ld bc,6
+ldir
+
+wslp:
+call setscrn
+
+call gettime
+
+;check for a keypress
+ld c,11
+call 5
+rra
+jr c,wskey
+
+;loop if timebuf[5]==timebuf3[5]
+ld a,(timebuf+5)
+ld b,a
+ld a,(timebuf3+5)
+cp b
+jr z,wslp
+ret
+
+wskey:
+;key was pressed, read it
+ld e,0ffh
+ld c,6
+call 5
+cp 27		;exit on Esc
+ret nz
+
+ld (quit),a	;A is non-zero, so, good enough
+ret
+
+
+;write 16x24 digit in a at hl (with hl=screen addr)
+bigwrite:
+push hl
+;each char bitmap takes 48 bytes
+ld h,0
+ld l,a
+add hl,hl	;*2
+add hl,hl	;*4
+add hl,hl	;*8
+add hl,hl	;*16
+ld d,h
+ld e,l
+add hl,hl	;*32
+add hl,de	;*48
+ld de,bigdigits
+add hl,de
+pop de
+
+;hl=addr of font data, de=screen addr
+
+ld a,24
+bwlp:
+ldi
+ldi
+ex de,hl
+ld bc,62
+add hl,bc
+ex de,hl
+dec a
+jr nz,bwlp
+
+ret
+
+
+;font data for the large digits
+include dcdigits.z

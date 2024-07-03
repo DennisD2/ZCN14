@@ -1,0 +1,20 @@
+NAME
+	optdir - optimise order of directory entries, speeding up file I/O
+
+SYNOPSIS
+	optdir [-q] d:
+
+DESCRIPTION
+	Optimises the order of directory entries on the specified
+	drive, putting the entries for the largest files first. This
+	can greatly increase the speed of file I/O, since ZCN's file
+	I/O implementation is entirely stateless.
+
+OPTIONS
+	-q	don't say `done.' when it's finished.
+
+BUGS
+	Only sorts correctly when there are exactly two directory
+	blocks (but it does at least abort if there's less). Drives
+	formatted by ZCN always have two, so this is unlikely to be a
+	problem. :-)

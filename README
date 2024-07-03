@@ -1,0 +1,27 @@
+ZCN v1.4 - CP/M-like OS for the Amstrad NC100 Notepad & NC200 Notebook.
+Copyright (C) 1994-2022 Russell Marks. See `zcn.txt' for licence details.
+
+ZCN is a CP/M-like operating system for the Amstrad NC100/NC150
+(Notepad) and NC200 (Notebook). It can run most programs which run on
+CP/M 2.2. You need an NC100/NC150/NC200 and preferably a PCMCIA memory
+card to use it (required on NC100), and in most cases a separate
+computer with a serial link is needed to get the system code to the NC
+for the first time.
+
+While ZCN is a fairly random hack, it also comes with a lot of
+documentation, including a guide to programming CP/M and ZCN, and
+optionally has help available from the command line.
+
+You should probably consider using ZCN if you like the idea of a
+portable CP/M box, or want to use the NC as something a bit closer to
+a `real computer'. It comes together with many custom-written
+utilities, as well as various free CP/M programs.
+
+See `zcn.txt' in the `doc' subdirectory for more details.
+
+
+Most text files (source and documentation) other than this one are in
+Unix text format - that is, lines end in LF rather than CR/LF. Such
+files should be widely supported nowadays.
+
+-Rus.

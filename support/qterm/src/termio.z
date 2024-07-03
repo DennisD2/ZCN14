@@ -1,0 +1,512 @@
+; termio.z - subroutines for doing the terminal i/o part of qterm
+
+.incl	"c:termcap"
+.incl	"c:vars"
+
+.macro	table	byte,addr
+	dw	addr
+	db	byte
+.endm
+
+.extern	procch
+procch:	call	kbdcc		; get a char if it's waiting
+	or	a
+	jr	z,lstmod	; skip if no character
+	cp	'x' & 0x1f	; ctl x?
+	jp	z,canscr	; quit if so
+	ld	e,a		; save char in e
+	ld	a,(escval)	; get the escape value
+	ld	hl,pccs
+	inc	(hl)
+	dec	(hl)		; what state?
+	jr	z,pccs0		; state zero - look for escape
+	dec	(hl)		; reset to 0
+	cp	e		; escape twice?
+	jr	z,pccop		; yes - send one to modem
+	ld	a,e		; get char back
+	cp	','		; was it a ','?
+	call	z,hangup	; hang up if so
+	cp	'.'		; or a '.'
+	call	z,break		; do a break
+	jr	lstmod
+
+; This is here for branch length reasons
+
+.extern	modop
+modop:				; send a character to the modem, respecting
+				; half duplex etc.
+	push	af
+	call	modopc		; send it to the modem first
+	pop	hl
+	ld	a,(wflg)	; window mode?
+	or	a
+	ld	a,h		; get character back
+	jr	z,nowin
+	push	hl
+	call	winsnd		; go give it to window input code
+	pop	af		; char back
+	cp	'\r'
+	ret	nz		; returns get special processing
+	ld	a,(eflg)	; echo mode?
+	or	a
+	ret	z		; return if not
+	ld	a,'\n'		; throw a linefeed into the system
+	jr	modop
+nowin:	ld	a,(hflg)	; half duplex?
+	or	a
+	ret	z
+	ld	a,h		; get character again
+	cp	'\r'
+	jr	nz,ipchar	; pass non-return chars straight in
+	ld	a,(eflg)	; echo mode too?
+	or	a
+	ld	a,h		; get the '\r' back
+	jr	z,ipchar	; no echo mode, don't expand it
+	call	ipchar		; go send return to receive code
+	ld	a,'\n'
+	jr	ipmchr		; throw a newline into system as well
+
+pccs0:	cp	e		; did we see an escape?
+	jr	z,setesc	; yes, set the flag
+	ld	a,e
+pccop:	call	modop		; send char to modem
+	db	0x3e		; ld a,xx opcode
+setesc:	inc	(hl)
+
+.extern	lstmod
+lstmod:
+	call	wrtscn		; keep the printer going and check if a
+				; character is waiting at the modem port.
+	ret	c		; return if nothing arrived
+
+	ld	hl,ecval	; echo check needed?
+	dec	(hl)
+	inc	(hl)
+	jr	z,noec		; jump if not
+	cp	(hl)		; did we match?
+	jr	nz,noec		; no - leave value in place
+	ld	(hl),1		; reset to say we got it
+noec:	ld	hl,bmask
+	and	(hl)		; mask if 7 bit mode
+	scf
+	ret	z		; return on nulls as well
+	ld	hl,cscqfl
+	inc	(hl)
+	dec	(hl)		; ^S ^Q spotting enabled?
+	jr	z,nocscq
+	bit	0,(hl)
+	jr	nz,nocs		; waiting for a ^Q?
+	cp	's' & 0x1f	; ^S ?
+	jr	nz,nocscq	; nope, check status now
+	set	0,(hl)		; flag that a ^S arrived
+	scf
+	ret
+nocs:	cp	'q' & 0x1f	; was it a ^Q
+	jr	z,wascq
+	cp	's' & 0x1f	; also let a second ^S toggle
+	jr	nz,nocscq	; not yet - pass this character
+wascq:	res	0,(hl)		; clear the flag
+	scf
+	ret
+nocscq:	ld	hl,eflg
+	inc	(hl)
+	dec	(hl)		; echo mode?
+zipch:	jr	z,ipchar	; no, hand straight to input code
+	cp	'\r'		; return?
+	jr	nz,ipmchr	; no, echo and hand to input code
+	call	ipmchr		; otherwise process,
+	ld	a,'\n'		; and send a newline into the system as well
+
+ipmchr:	push	af
+	call	modopc		; send character to modem to echo it
+	pop	af
+
+.extern	ipchar			; needed for sendcs in chat
+ipchar:	ld	c,a		; save char in c
+	ld	a,(jflg)
+	or	a		; junking control characters?
+	ld	a,c
+	call	nz,limitb	; if so it gets tested
+	ret	c		; and thrown if bad
+	push	af		; save the character
+	call	opchar
+	pop	af
+	call	oplst		; output to printer
+	or	a		; clear the carry
+	ld	hl,cflg
+	bit	0,(hl)		; catch mode enabled
+	ret	z		; no - return
+	ld	hl,(cptr)
+	ld	(hl),a		; save char away
+	inc	hl
+	ld	(cptr),hl	; update pointer
+	ld	de,(endcbf)
+	or	a
+	sbc	hl,de		; buffer full?
+	scf
+	ccf			; clear carry w/o affecting zero
+	ret	nz		; no - keep going
+	push	af
+	call	flushc		; go flush data in catch buffer
+	call	ctlq
+	pop	af
+	ret
+
+.extern	savrng
+savrng:				; get a char and save in ring buffer
+	call	modist		; char available?
+	ret	z		; no.
+	call	modin		; get it
+	ld	de,(ringpw)	; pick up indices
+	ld	hl,(ringpr)
+	inc	de		; move write index
+	res	2,d
+	or	a
+	sbc	hl,de		; buffer full?
+	ret	z		; return if so
+	ld	(ringpw),de	; save revised index
+	ld	hl,ring
+	add	hl,de
+	ld	(hl),a
+	ret
+
+wrtscn:	call	wrtlst		; keep printer output rolling
+	call	savrng		; get any incoming characters
+	ld	de,(ringpr)
+	ld	hl,(ringpw)
+	xor	a
+	sbc	hl,de		; anything in the ring?
+	scf
+	ret	z		; nope
+	inc	de
+	res	2,d
+	ld	(ringpr),de	; save new index
+	ld	hl,ring
+	add	hl,de		; index into buffer
+	ld	a,(hl)		; get the char
+	ret			; and return it
+
+.extern	oplst			; put a character in the list ring buffer
+oplst:
+	ld	hl,oflg		; are we saving?
+	bit	0,(hl)
+	ret	z		; return if not
+	push	bc		; save bc
+	ld	hl,(lstpr)
+	ld	de,(lstpw)	; get the list ring buffer indices
+	inc	de		; move the write pointer
+	res	2,d		; wrap if it hits 1K
+	or	a
+	sbc	hl,de		; check for buffer full
+	jr	nz,notful
+	push	af		; save the character
+	call	ctls		; send an xoff and wait for things to cool
+mtloop:	call	wrtlst		; write a character if we can
+	jr	nc,mtloop	; keep writing if we're not done
+	call	ctlq		; OK - you can wake up again
+	pop	af		; restore char again
+notful:	ld	hl,(lstpw)
+	inc	hl
+	res	2,h
+	ld	(lstpw),hl	; save the revised write pointer
+	ld	de,lstbuf	; address the list buffer
+	add	hl,de
+	ld	(hl),a		; and save the character
+	pop	bc		; get bc back.
+	ret
+
+wrtlst:	ld	de,(lstpr)	; see if we can send a character to the lst
+	ld	hl,(lstpw)	; get the ring buffer indices
+	or	a
+	sbc	hl,de		; anything in the buffer
+	scf			; set carry to say we're done
+	ret	z		; nope - nothing to do
+	push	de
+	ld	a,0x2d
+	call	cbios		; call to list status
+	pop	de		; get read pointer back
+	or	a
+	ret	z		; can't write - return now
+	ld	hl,lstbuf
+	add	hl,de		; index into buffer
+	inc	de
+	res	2,d		; wrap if over 1K
+	ld	(lstpr),de	; save new index
+	ld	c,(hl)
+
+.extern	lstout
+lstout:	ld	a,0x0f
+	call	cbios
+	or	a		; clear the carry
+	ret
+
+.extern	ctlq
+ctlq:
+	ld	a,(lxoff)	; get local xon / xoff status
+	or	a
+	ret	z		; send nothing if xoff sent from keyboard
+	ld	a,(cqchr)
+
+.extern	modopc
+modopc:	push	af		; save character on stack
+modopl:	call	modost		; check if we can send
+	jr	z,modopl	; can't send - loop back
+	pop	af		; char back to a
+	jp	modout		; and away it goes
+
+.extern	limitb
+limitb:				; like limitc, but includes backspace
+	cp	'\b'
+	ret	z
+
+.extern	limitc
+limitc:
+	cp	0x7f		; del or greater
+	ccf
+	ret	c		; are invalid
+
+.extern	iswa
+iswa:
+	cp	' '		; space to '~'
+	ret	nc		; are valid
+	cp	'\r'
+	ret	z		; return is valid
+	cp	'\n'
+	ret	z		; newline also
+	cp	'\t'
+	ret	z		; and tab
+	scf			; rest are bad
+	ret
+
+.var	#where	0
+.var	#bot	1
+.var	#top	2
+.var	#col	6
+.var	#row	7
+.var	#lff	8
+
+nocndo:	call	ilprt		; and finish the message
+	db	'\r\nW ignored - insufficient terminal capabilities\r\n\0'
+	ret
+
+wend:	ld	hl,23 << 8
+	jp	moveto
+
+.extern	witog
+witog:	ld	a,(tcbits)	; check what terminal abilities we have
+	cpl
+	and	b_delln	| b_insln
+	ld	(wtflag),a	; save window type value
+	jr	z,cando		; got insert and delete - away we go
+	ld	a,(tcbits)
+	and	b_cleol		; alternatively check for clear to end-of-line
+	jr	z,nocndo	; missing it as well - can't do this
+
+cando:	ld	hl,wflg
+	call	togflg		; toggle the flag first of all
+	jr	z,wend		; disabled - so return & do nothing
+	dec	(hl)		; temporarily turn mode back off so prompt
+	push	hl		; works right
+	call	prompt
+	db	'Window size (b / s)? \0'
+	pop	hl
+	inc	(hl)		; turn flag back on
+	ld	hl,ipbuf
+	call	byp
+	or	0x20
+	xor	's'		; did they say 's'?
+
+; we could probably optimise this even more, only two numbers actually change
+
+	ld	hl,sdat		; get small window data
+	jr	z,gotdat	; jump if so
+	ld	hl,bdat		; otherwise large window data
+gotdat:	ld	de,wrdat
+	ld	bc,6
+	ldir			; go install it
+	ld	h,d
+	ld	l,e
+	inc	de
+	ld	c,5
+	ld	(hl),b		; clear the rest of the information
+	ldir
+	ld	a,(wtflag)
+	or	a		; what sort of windowing
+	jr	nz,setrol	; rolling w/ clear to eol
+	ld	hl,(rbot)	; normal - get bottom row
+	ld	a,(sbot)	; and the other
+	jr	wsetsc		; and install them
+setrol:	ld	hl,(rtop)	; get top row
+	ld	a,(stop)	; and the other
+wsetsc:	ld	(srow),a	; save send window current row
+	ld	a,l
+	ld	(rrow),a	; and receive window
+	ld	(where),a	; and set where so we'll do a moveto
+	call	clear
+	ld	hl,(rtop - 1)	; get top of receive window
+	dec	h		; - 1 to move up a line
+	ld	l,0		; and the first positon
+	call	moveto		; go there
+	call	dim		; dim mode
+	ld	bc,[80 << 8] + '-'
+dashes:	push	bc
+	call	scrout		; spit out 80 dashes
+	pop	bc
+	djnz	dashes
+	jp	bright		; set bright mode and we're done
+
+istab:	ld	c,' '
+	call	opwc
+	ld	a,(iy + #col)
+	and	7
+	jr	nz,istab
+	ret
+
+trybs:	cp	'\b'
+	jr	nz,trytab
+	ld	a,(iy + #col)
+	or	a
+	ret	z
+	dec	(iy + #col)
+	call	opbs
+	ld	c,' '
+	call	scrout
+opbs:	ld	c,'\b'
+	jp	scrout
+
+trytab:	cp	'\t'
+	jr	z,istab
+
+nobs:	cp	'~' + 1
+	ret	nc
+	cp	' '
+	ret	c
+opwc:	push	hl
+	call	scrout
+	pop	hl
+	ld	(iy + #lff),0
+	inc	(iy + #col)
+	ld	a,(iy + #col)
+	xor	80
+	jr	z,scrl
+	ret
+
+.extern	winrec
+winrec:	ld	iy,wrdat
+	jr	winpc
+
+winsnd:	ld	iy,wsdat
+	ld	c,a
+
+winpc:	ld	hl,where
+	ld	a,(iy + #where)
+	cp	(hl)
+	jr	z,posok
+	ld	(hl),a
+	push	hl
+	push	bc
+	ld	l,(iy + #col)
+	ld	h,(iy + #row)
+	call	moveto
+	pop	bc
+	pop	hl
+posok:	ld	a,c
+	cp	'\n'
+	jr	z,scrl
+	cp	'\r'
+	jr	nz,trybs
+scrl:	xor	a
+	cp	(iy + #lff)
+	ret	nz
+	ld	(iy + #col),a
+	ld	(hl),h
+	ld	(iy + #lff),h
+	ld	a,(wtflag)
+	or	a
+	jr	nz,roll
+	ld	a,(iy + #top)
+	ld	h,(iy + #bot)
+	ld	l,22
+
+; rollit - scroll a region on the screen - this is made external so the VT100
+; code can get at it
+
+.extern	rollit
+rollit:	or	a
+	push	hl
+	jr	nz,dell
+	ld	hl,23 << 8
+	call	moveto
+	ld	c,'\n'
+	call	scrout
+	jr	dontop
+dell:	ld	l,0
+	ld	h,a
+	call	moveto
+	call	dellin
+dontop:	pop	hl
+	ld	a,h
+	cp	l
+	ret	z
+	ld	l,0
+	call	moveto
+	jp	inslin
+
+roll:	ld	a,(iy + #row)
+	call	incrow
+	ld	(iy + #row),a
+	call	incrow
+	ld	h,a
+	ld	l,0
+	call	moveto
+	jp	cleol
+
+incrow:	cp	(iy + #bot)
+	jr	z,reload
+	inc	a
+	ret
+reload:	ld	a,(iy + #top)
+	ret
+
+.dseg
+.extern	pccs
+pccs:	db	0
+ringpr:	dw	0
+ringpw:	dw	0
+lstpr:	dw	0
+lstpw:	dw	0
+
+.useg
+ring:	ds	1024
+lstbuf:	ds	1024
+
+wrdat:
+rwhere:	ds	1
+rbot:	ds	1
+rtop:	ds	1
+
+wsdat:
+swhere:	ds	1
+sbot:	ds	1
+stop:	ds	1
+
+rcol:	ds	1
+rrow:	ds	1
+rlff:	ds	1
+
+scol:	ds	1
+srow:	ds	1
+slff:	ds	1
+
+.extern	where
+where:	ds	1
+wtflag:	ds	1
+
+.dseg
+
+sdat:	db	0,22,12
+	db	1,10,0
+
+bdat:	db	0,22,5
+	db	1,3,0
+

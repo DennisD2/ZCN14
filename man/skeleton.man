@@ -1,0 +1,29 @@
+NAME
+	skeleton - a `bare bones' example man page
+
+SYNOPSIS
+	command [args]
+
+DESCRIPTION
+	summary of operation
+
+OPTIONS
+	explanation of args, if any
+
+EXAMPLES
+	in a man page? surely you jest
+
+(any extra headings here)
+
+FILES
+	files used, if any
+
+BUGS
+	Man pages must be <=655 lines or the view.z percentage maths
+	will break. (Yes, this is a real bug not an example one.)
+
+AUTHOR
+	J. Random Hacker
+
+SEE ALSO
+	references
